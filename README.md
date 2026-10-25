@@ -19,7 +19,7 @@ Download a short **synced + rectified KITTI Raw** sequence from https://www.cvli
 - No ego-motion compensation, ROS/MCAP support, or bounded streaming cache.
 - Annotations are frame-local points exported to JSON, not tracked cuboids.
 - Synthetic mode is illustrative, not real KITTI data.
-- Build and real KITTI import are not yet verified.
+- Real KITTI import is not yet verified; the importer is tested with synthetic KITTI-format scans.
 
 ## Next
 
