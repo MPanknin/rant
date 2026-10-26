@@ -5,8 +5,8 @@ Private interview prototype for inspecting KITTI Raw LiDAR and camera sequences.
 ## Run
 
 ```bash
-npm install
-npm run dev
+bun install
+bun run dev
 ```
 
 ## Online sample
