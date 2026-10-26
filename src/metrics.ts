@@ -1,4 +1,4 @@
-import type { BackingStats } from './render/types';
+import type { BackingStats, TimerState, UploadPath } from './render/types';
 
 export interface MetricsSnapshot {
   frameMs: number;
@@ -6,7 +6,8 @@ export interface MetricsSnapshot {
   cpuMs: number;
   /** Mean GPU time per frame, or null when no timer is available / no result has arrived. */
   gpuMs: number | null;
-  gpuTimer: boolean;
+  gpuTimer: TimerState;
+  uploadPath: UploadPath;
   points: number;
   draws: number;
   /** Mean CPU time per upload call and the resulting throughput; null without uploads in the interval. */
@@ -55,6 +56,7 @@ export class Metrics {
       cpuMs: this.cpuMs / this.frames,
       gpuMs: gpuSamples > 0 ? (stats.gpuMs - this.base.gpuMs) / gpuSamples : null,
       gpuTimer: stats.gpuTimer,
+      uploadPath: stats.uploadPath,
       points: this.points / this.frames,
       draws: this.draws / this.frames,
       uploadMs: uploads > 0 ? uploadMs / uploads : null,

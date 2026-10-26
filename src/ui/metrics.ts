@@ -25,13 +25,14 @@ export class MetricsPanel {
   }
 
   update(m: MetricsSnapshot): void {
-    this.set('GPU', m.gpuMs !== null ? ms(m.gpuMs) : m.gpuTimer ? 'pending' : 'n/a (no timer query)');
+    const gpu = { on: m.gpuMs !== null ? ms(m.gpuMs) : 'pending', off: 'off (?timers=off)', unavailable: 'n/a (no timer query)' };
+    this.set('GPU', gpu[m.gpuTimer]);
     this.set('CPU', ms(m.cpuMs) + ' encode + submit');
     this.set('Frame', `${ms(m.frameMs)} (${Math.round(1000 / m.frameMs)} fps)`);
     this.set('Points', `${(m.points / 1e6).toFixed(2)} M in ${Math.round(m.draws)} draw${Math.round(m.draws) === 1 ? '' : 's'}`);
     const throughput = m.uploadGBps !== null ? ` · ${m.uploadGBps.toFixed(1)} GB/s` : '';
     const rate = m.uploadMs !== null ? `${ms(m.uploadMs)} / sweep${throughput}` : 'idle';
-    this.set('Upload call', rate);
+    this.set('Upload call', `${rate} (${m.uploadPath})`);
     this.set('Memory', `${(m.residentBytes / MB).toFixed(0)} / ${(m.allocatedBytes / MB).toFixed(0)} MB used`);
   }
 

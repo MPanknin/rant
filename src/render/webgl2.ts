@@ -1,5 +1,5 @@
 import { CLEAR_COLOR, SHADING_GLSL } from './shading';
-import { POINT_FLOATS, emptyStats, type BackingStats, type DrawRange, type FrameUniforms, type PointCloudBacking } from './types';
+import { POINT_FLOATS, emptyStats, type BackingOptions, type BackingStats, type DrawRange, type FrameUniforms, type PointCloudBacking } from './types';
 
 // Points unfold from a 1D index into a 4096-wide RGBA32F texture.
 const TEX_WIDTH_SHIFT = 12;
@@ -72,13 +72,16 @@ export class WebGL2TextureBacking implements PointCloudBacking {
   /** In-flight TIME_ELAPSED queries, oldest first. */
   private readonly queries: WebGLQuery[] = [];
 
-  static create(canvas: HTMLCanvasElement): WebGL2TextureBacking {
+  static create(canvas: HTMLCanvasElement, options: BackingOptions): WebGL2TextureBacking {
     const gl = canvas.getContext('webgl2', { antialias: false, powerPreference: 'high-performance' });
     if (!gl) throw new Error('WebGL2 unavailable');
-    return new WebGL2TextureBacking(gl);
+    return new WebGL2TextureBacking(gl, options);
   }
 
-  constructor(private readonly gl: WebGL2RenderingContext) {
+  constructor(
+    private readonly gl: WebGL2RenderingContext,
+    options: BackingOptions,
+  ) {
     this.program = linkProgram(gl, VERTEX, FRAGMENT);
     const at = (name: Uniform) => gl.getUniformLocation(this.program, 'u_' + name);
     this.loc = {
@@ -91,8 +94,8 @@ export class WebGL2TextureBacking implements PointCloudBacking {
       points: at('points'),
     };
     this.vao = gl.createVertexArray();
-    this.timer = gl.getExtension('EXT_disjoint_timer_query_webgl2') as TimerQueryExt | null;
-    this.stats = emptyStats(!!this.timer);
+    this.timer = options.timers ? (gl.getExtension('EXT_disjoint_timer_query_webgl2') as TimerQueryExt | null) : null;
+    this.stats = emptyStats('texSubImage2D', !options.timers ? 'off' : this.timer ? 'on' : 'unavailable');
   }
 
   allocate(maxPoints: number): void {

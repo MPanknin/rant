@@ -1,5 +1,5 @@
 import { CLEAR_COLOR, SHADING_WGSL } from './shading';
-import { POINT_BYTES, emptyStats, type BackingStats, type DrawRange, type FrameUniforms, type PointCloudBacking } from './types';
+import { POINT_BYTES, emptyStats, type BackingOptions, type BackingStats, type DrawRange, type FrameUniforms, type PointCloudBacking } from './types';
 
 // Points live in one storage buffer indexed by instance_index; each range passes its offset as
 // firstInstance. Per-draw values (sweep time) sit in a uniform buffer bound with a dynamic offset.
@@ -51,6 +51,10 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
 // Three.js projections target WebGL clip space; WebGPU wants z in 0..1, so remap z' = (z + w) / 2.
 const Z_REMAP = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0.5, 0, 0, 0, 0.5, 1];
 const FRAME_FLOATS = 28;
+/** Mapped staging buffers kept for reuse; extras created during bulk uploads are released. */
+const STAGING_POOL = 4;
+/** Staging sizes round up to whole MiB, so sweeps of slightly different size share buffers. */
+const STAGING_ALIGN = 1 << 20;
 
 export class WebGPUSSBOBacking implements PointCloudBacking {
   readonly backendType = 'webgpu';
@@ -70,28 +74,31 @@ export class WebGPUSSBOBacking implements PointCloudBacking {
   private frameBindGroup?: GPUBindGroup;
   private readonly timer?: { querySet: GPUQuerySet; resolve: GPUBuffer; readback: GPUBuffer };
   private timerPending = false;
+  /** Mapped staging buffers ready for writing (staging upload path only). */
+  private readonly staging: GPUBuffer[] = [];
 
   /**
    * Requests the adapter's real buffer limits (the defaults cap a storage binding at 128 MB)
    * and timestamp queries when available.
    */
-  static async create(canvas: HTMLCanvasElement): Promise<WebGPUSSBOBacking> {
+  static async create(canvas: HTMLCanvasElement, options: BackingOptions): Promise<WebGPUSSBOBacking> {
     const adapter = await navigator.gpu?.requestAdapter();
     if (!adapter) throw new Error('WebGPU adapter unavailable');
     const { maxStorageBufferBindingSize, maxBufferSize } = adapter.limits;
-    const requiredFeatures: GPUFeatureName[] = adapter.features.has('timestamp-query') ? ['timestamp-query'] : [];
+    const requiredFeatures: GPUFeatureName[] = options.timers && adapter.features.has('timestamp-query') ? ['timestamp-query'] : [];
     const device = await adapter.requestDevice({ requiredFeatures, requiredLimits: { maxStorageBufferBindingSize, maxBufferSize } });
     const context = canvas.getContext('webgpu');
     if (!context) throw new Error('WebGPU canvas context unavailable');
     const format = navigator.gpu.getPreferredCanvasFormat();
     context.configure({ device, format, alphaMode: 'opaque' });
-    return new WebGPUSSBOBacking(device, context, format);
+    return new WebGPUSSBOBacking(device, context, format, options);
   }
 
   constructor(
     private readonly device: GPUDevice,
     private readonly context: GPUCanvasContext,
     format: GPUTextureFormat,
+    private readonly options: BackingOptions,
   ) {
     this.drawStride = device.limits.minUniformBufferOffsetAlignment;
     this.frameLayout = device.createBindGroupLayout({
@@ -119,7 +126,7 @@ export class WebGPUSSBOBacking implements PointCloudBacking {
         readback: device.createBuffer({ size: 16, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ }),
       };
     }
-    this.stats = emptyStats(!!this.timer);
+    this.stats = emptyStats(options.upload, !options.timers ? 'off' : this.timer ? 'on' : 'unavailable');
   }
 
   allocate(maxPoints: number): void {
@@ -138,7 +145,8 @@ export class WebGPUSSBOBacking implements PointCloudBacking {
 
   uploadPoints(pointOffset: number, data: Float32Array): void {
     const start = performance.now();
-    this.device.queue.writeBuffer(this.pointBuffer!, pointOffset * POINT_BYTES, data.buffer, data.byteOffset, data.byteLength);
+    if (this.options.upload === 'staging') this.uploadViaStaging(pointOffset * POINT_BYTES, data);
+    else this.device.queue.writeBuffer(this.pointBuffer!, pointOffset * POINT_BYTES, data.buffer, data.byteOffset, data.byteLength);
     this.stats.uploadMs += performance.now() - start;
     this.stats.uploadCalls++;
     this.stats.uploadedBytes += data.byteLength;
@@ -181,10 +189,36 @@ export class WebGPUSSBOBacking implements PointCloudBacking {
   }
 
   dispose(): void {
+    for (const buffer of this.staging) buffer.destroy();
     this.pointBuffer?.destroy();
     this.drawBuffer?.destroy();
     this.frameBuffer.destroy();
     this.device.destroy();
+  }
+
+  /**
+   * Writes into an already-mapped staging buffer (memory the browser shares with the GPU process),
+   * then copies it into the point store on the GPU timeline. The buffer is re-mapped asynchronously
+   * and returns to the pool; a new one is created (mapped at creation) when none is ready.
+   */
+  private uploadViaStaging(byteOffset: number, data: Float32Array): void {
+    const index = this.staging.findIndex((b) => b.size >= data.byteLength);
+    const buffer =
+      index >= 0
+        ? this.staging.splice(index, 1)[0]
+        : this.device.createBuffer({ size: Math.ceil(data.byteLength / STAGING_ALIGN) * STAGING_ALIGN, usage: GPUBufferUsage.MAP_WRITE | GPUBufferUsage.COPY_SRC, mappedAtCreation: true });
+    new Float32Array(buffer.getMappedRange(0, data.byteLength)).set(data);
+    buffer.unmap();
+    const encoder = this.device.createCommandEncoder();
+    encoder.copyBufferToBuffer(buffer, 0, this.pointBuffer!, byteOffset, data.byteLength);
+    this.device.queue.submit([encoder.finish()]);
+    buffer
+      .mapAsync(GPUMapMode.WRITE)
+      .then(() => {
+        if (this.staging.length < STAGING_POOL) this.staging.push(buffer);
+        else buffer.destroy();
+      })
+      .catch(() => {}); // device destroyed on backend switch
   }
 
   private readTimestamps(readback: GPUBuffer): void {

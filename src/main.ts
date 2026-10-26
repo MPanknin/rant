@@ -4,14 +4,20 @@ import { SweepStream } from './data/stream';
 import { Metrics } from './metrics';
 import { createSurface } from './render/create';
 import { PointCloudTimeline } from './render/timeline';
-import { Channel, type BackendType } from './render/types';
+import { Channel, type BackendType, type BackingOptions } from './render/types';
 import { Controls } from './ui/controls';
 import { MetricsPanel } from './ui/metrics';
 import { OrbitCamera } from './view/camera';
 
 const viewport = document.getElementById('viewport')!;
-const preferred = new URLSearchParams(location.search).get('backend') as BackendType | null;
-let { canvas, backing } = await createSurface(preferred ?? 'webgpu');
+// Experiment switches: ?backend=webgl2, ?timers=off, ?upload=staging
+const params = new URLSearchParams(location.search);
+const preferred: BackendType = params.get('backend') === 'webgl2' ? 'webgl2' : 'webgpu';
+const options: BackingOptions = {
+  timers: params.get('timers') !== 'off',
+  upload: params.get('upload') === 'staging' ? 'staging' : 'writeBuffer',
+};
+let { canvas, backing } = await createSurface(preferred, options);
 viewport.append(canvas);
 
 // Controls listen on the viewport, so they survive canvas swaps when the backend changes.
@@ -46,7 +52,7 @@ async function switchBackend(type: BackendType): Promise<void> {
   switching = true;
   try {
     const start = performance.now();
-    const surface = await createSurface(type);
+    const surface = await createSurface(type, options);
     canvas.replaceWith(surface.canvas);
     ({ canvas, backing } = surface);
     resize();

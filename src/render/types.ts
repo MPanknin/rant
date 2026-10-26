@@ -30,6 +30,16 @@ export interface DrawRange {
   time: number;
 }
 
+export type UploadPath = 'writeBuffer' | 'staging' | 'texSubImage2D';
+export type TimerState = 'on' | 'off' | 'unavailable';
+
+export interface BackingOptions {
+  /** Measure GPU time with timestamp / timer queries (adds a little CPU work per frame). */
+  timers: boolean;
+  /** WebGPU only: queue.writeBuffer, or mapped staging buffers copied on the GPU. */
+  upload: 'writeBuffer' | 'staging';
+}
+
 /** Cumulative counters; consumers sample them and diff over an interval. */
 export interface BackingStats {
   /** Bytes currently allocated for point storage. */
@@ -38,15 +48,17 @@ export interface BackingStats {
   uploadedBytes: number;
   /** CPU time spent inside uploadPoints (driver/queue copy, not GPU completion). */
   uploadMs: number;
-  /** Whether the backing can measure GPU time (timestamp / timer queries). */
-  gpuTimer: boolean;
+  uploadPath: UploadPath;
+  /** Whether GPU time is measured: disabled by option, or not supported by the browser. */
+  gpuTimer: TimerState;
   /** Sum and count of resolved GPU frame timings; results arrive a few frames late. */
   gpuMs: number;
   gpuSamples: number;
 }
 
-export const emptyStats = (gpuTimer: boolean): BackingStats => ({
+export const emptyStats = (uploadPath: UploadPath, gpuTimer: TimerState): BackingStats => ({
   allocatedBytes: 0,
+  uploadPath,
   uploadCalls: 0,
   uploadedBytes: 0,
   uploadMs: 0,
