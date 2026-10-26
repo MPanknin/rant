@@ -30,10 +30,36 @@ export interface DrawRange {
   time: number;
 }
 
+/** Cumulative counters; consumers sample them and diff over an interval. */
+export interface BackingStats {
+  /** Bytes currently allocated for point storage. */
+  allocatedBytes: number;
+  uploadCalls: number;
+  uploadedBytes: number;
+  /** CPU time spent inside uploadPoints (driver/queue copy, not GPU completion). */
+  uploadMs: number;
+  /** Whether the backing can measure GPU time (timestamp / timer queries). */
+  gpuTimer: boolean;
+  /** Sum and count of resolved GPU frame timings; results arrive a few frames late. */
+  gpuMs: number;
+  gpuSamples: number;
+}
+
+export const emptyStats = (gpuTimer: boolean): BackingStats => ({
+  allocatedBytes: 0,
+  uploadCalls: 0,
+  uploadedBytes: 0,
+  uploadMs: 0,
+  gpuTimer,
+  gpuMs: 0,
+  gpuSamples: 0,
+});
+
 /** GPU storage and drawing for point data; implemented once per graphics API. */
 export interface PointCloudBacking {
   readonly backendType: BackendType;
   readonly capacityPoints: number;
+  readonly stats: BackingStats;
   allocate(maxPoints: number): void;
   uploadPoints(pointOffset: number, data: Float32Array): void;
   resize(width: number, height: number): void;

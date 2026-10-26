@@ -40,6 +40,32 @@ body {
   pointer-events: none;
 }
 
+.metrics {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  margin: 0;
+  padding: 8px 10px;
+  display: grid;
+  grid-template-columns: auto auto;
+  gap: 2px 12px;
+  font: 11px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+  background: rgb(10 17 28 / 0.75);
+  border: 1px solid #1f2d40;
+  border-radius: 4px;
+  pointer-events: none;
+}
+
+.metrics dt {
+  color: #7f93ab;
+}
+
+.metrics dd {
+  margin: 0;
+  color: #c9d6e5;
+  font-variant-numeric: tabular-nums;
+}
+
 .bar {
   display: flex;
   align-items: center;

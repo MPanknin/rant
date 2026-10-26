@@ -1,5 +1,5 @@
 import { CLEAR_COLOR, SHADING_WGSL } from './shading';
-import { POINT_BYTES, type DrawRange, type FrameUniforms, type PointCloudBacking } from './types';
+import { POINT_BYTES, emptyStats, type BackingStats, type DrawRange, type FrameUniforms, type PointCloudBacking } from './types';
 
 // Points live in one storage buffer indexed by instance_index; each range passes its offset as
 // firstInstance. Per-draw values (sweep time) sit in a uniform buffer bound with a dynamic offset.
@@ -55,6 +55,7 @@ const FRAME_FLOATS = 28;
 export class WebGPUSSBOBacking implements PointCloudBacking {
   readonly backendType = 'webgpu';
   capacityPoints = 0;
+  readonly stats: BackingStats;
   private readonly pipeline: GPURenderPipeline;
   private readonly frameLayout: GPUBindGroupLayout;
   private readonly drawLayout: GPUBindGroupLayout;
@@ -67,13 +68,19 @@ export class WebGPUSSBOBacking implements PointCloudBacking {
   private drawCapacity = 0;
   private pointBuffer?: GPUBuffer;
   private frameBindGroup?: GPUBindGroup;
+  private readonly timer?: { querySet: GPUQuerySet; resolve: GPUBuffer; readback: GPUBuffer };
+  private timerPending = false;
 
-  /** Requests the adapter's real buffer limits; the defaults cap a storage binding at 128 MB. */
+  /**
+   * Requests the adapter's real buffer limits (the defaults cap a storage binding at 128 MB)
+   * and timestamp queries when available.
+   */
   static async create(canvas: HTMLCanvasElement): Promise<WebGPUSSBOBacking> {
     const adapter = await navigator.gpu?.requestAdapter();
     if (!adapter) throw new Error('WebGPU adapter unavailable');
     const { maxStorageBufferBindingSize, maxBufferSize } = adapter.limits;
-    const device = await adapter.requestDevice({ requiredLimits: { maxStorageBufferBindingSize, maxBufferSize } });
+    const requiredFeatures: GPUFeatureName[] = adapter.features.has('timestamp-query') ? ['timestamp-query'] : [];
+    const device = await adapter.requestDevice({ requiredFeatures, requiredLimits: { maxStorageBufferBindingSize, maxBufferSize } });
     const context = canvas.getContext('webgpu');
     if (!context) throw new Error('WebGPU canvas context unavailable');
     const format = navigator.gpu.getPreferredCanvasFormat();
@@ -105,11 +112,20 @@ export class WebGPUSSBOBacking implements PointCloudBacking {
       primitive: { topology: 'triangle-strip' },
     });
     this.frameBuffer = device.createBuffer({ size: this.frameData.byteLength, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    if (device.features.has('timestamp-query')) {
+      this.timer = {
+        querySet: device.createQuerySet({ type: 'timestamp', count: 2 }),
+        resolve: device.createBuffer({ size: 16, usage: GPUBufferUsage.QUERY_RESOLVE | GPUBufferUsage.COPY_SRC }),
+        readback: device.createBuffer({ size: 16, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ }),
+      };
+    }
+    this.stats = emptyStats(!!this.timer);
   }
 
   allocate(maxPoints: number): void {
     this.pointBuffer?.destroy();
     this.capacityPoints = maxPoints;
+    this.stats.allocatedBytes = maxPoints * POINT_BYTES;
     this.pointBuffer = this.device.createBuffer({ size: maxPoints * POINT_BYTES, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
     this.frameBindGroup = this.device.createBindGroup({
       layout: this.frameLayout,
@@ -121,7 +137,11 @@ export class WebGPUSSBOBacking implements PointCloudBacking {
   }
 
   uploadPoints(pointOffset: number, data: Float32Array): void {
+    const start = performance.now();
     this.device.queue.writeBuffer(this.pointBuffer!, pointOffset * POINT_BYTES, data.buffer, data.byteOffset, data.byteLength);
+    this.stats.uploadMs += performance.now() - start;
+    this.stats.uploadCalls++;
+    this.stats.uploadedBytes += data.byteLength;
   }
 
   resize(): void {
@@ -129,8 +149,11 @@ export class WebGPUSSBOBacking implements PointCloudBacking {
   }
 
   render(u: FrameUniforms, ranges: DrawRange[]): void {
+    // Only one readback in flight: frames rendered while it is mapped go untimed
+    const timed = this.timer && !this.timerPending ? this.timer : undefined;
     const encoder = this.device.createCommandEncoder();
     const pass = encoder.beginRenderPass({
+      timestampWrites: timed && { querySet: timed.querySet, beginningOfPassWriteIndex: 0, endOfPassWriteIndex: 1 },
       colorAttachments: [{
         view: this.context.getCurrentTexture().createView(),
         clearValue: { r: CLEAR_COLOR[0], g: CLEAR_COLOR[1], b: CLEAR_COLOR[2], a: 1 },
@@ -149,7 +172,12 @@ export class WebGPUSSBOBacking implements PointCloudBacking {
       });
     }
     pass.end();
+    if (timed) {
+      encoder.resolveQuerySet(timed.querySet, 0, 2, timed.resolve, 0);
+      encoder.copyBufferToBuffer(timed.resolve, 0, timed.readback, 0, 16);
+    }
     this.device.queue.submit([encoder.finish()]);
+    if (timed) this.readTimestamps(timed.readback);
   }
 
   dispose(): void {
@@ -157,6 +185,23 @@ export class WebGPUSSBOBacking implements PointCloudBacking {
     this.drawBuffer?.destroy();
     this.frameBuffer.destroy();
     this.device.destroy();
+  }
+
+  private readTimestamps(readback: GPUBuffer): void {
+    this.timerPending = true;
+    readback
+      .mapAsync(GPUMapMode.READ)
+      .then(() => {
+        const [begin, end] = new BigUint64Array(readback.getMappedRange());
+        readback.unmap();
+        const ns = Number(end - begin);
+        if (ns > 0) {
+          this.stats.gpuMs += ns / 1e6;
+          this.stats.gpuSamples++;
+        }
+      })
+      .catch(() => {}) // device destroyed on backend switch
+      .finally(() => (this.timerPending = false));
   }
 
   private writeFrame(u: FrameUniforms): void {

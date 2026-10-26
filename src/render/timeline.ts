@@ -43,8 +43,11 @@ export class PointCloudTimeline {
     this.allocate(this.slotPoints);
   }
 
-  get residentCount(): number {
-    return this.resident.size;
+  /** Bytes of point data actually held in slots (allocated capacity is on the backing's stats). */
+  get residentBytes(): number {
+    let bytes = 0;
+    for (const r of this.resident.values()) bytes += r.points.byteLength;
+    return bytes;
   }
 
   /** Uploads sweeps that are new (or whose data changed) and evicts those no longer listed. */
@@ -59,7 +62,8 @@ export class PointCloudTimeline {
     }
   }
 
-  render(uniforms: FrameUniforms): number {
+  /** Draws the sweeps in the trail window and reports what was submitted. */
+  render(uniforms: FrameUniforms): { points: number; draws: number } {
     const min = uniforms.currentTime - uniforms.trailDuration - 1e-6;
     const max = uniforms.currentTime + 1e-6;
     const ranges: DrawRange[] = [...this.resident.values()]
@@ -67,7 +71,7 @@ export class PointCloudTimeline {
       .sort((a, b) => a.time - b.time)
       .map((r) => ({ first: r.slot * this.slotPoints, count: r.points.length / POINT_FLOATS, time: r.time }));
     this.backing.render(uniforms, ranges);
-    return ranges.reduce((sum, r) => sum + r.count, 0);
+    return { points: ranges.reduce((sum, r) => sum + r.count, 0), draws: ranges.length };
   }
 
   private put(sweep: Sweep): void {

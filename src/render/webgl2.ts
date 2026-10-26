@@ -1,5 +1,5 @@
 import { CLEAR_COLOR, SHADING_GLSL } from './shading';
-import { POINT_FLOATS, type DrawRange, type FrameUniforms, type PointCloudBacking } from './types';
+import { POINT_FLOATS, emptyStats, type BackingStats, type DrawRange, type FrameUniforms, type PointCloudBacking } from './types';
 
 // Points unfold from a 1D index into a 4096-wide RGBA32F texture.
 const TEX_WIDTH_SHIFT = 12;
@@ -52,15 +52,25 @@ void main() {
   fragColor = vec4(v_color * a, a);
 }`;
 
+/** EXT_disjoint_timer_query_webgl2 is not in TypeScript's DOM types. */
+interface TimerQueryExt {
+  readonly TIME_ELAPSED_EXT: GLenum;
+  readonly GPU_DISJOINT_EXT: GLenum;
+}
+
 type Uniform = 'viewProj' | 'camRight' | 'camUp' | 'params' | 'first' | 'sweepTime' | 'points';
 
 export class WebGL2TextureBacking implements PointCloudBacking {
   readonly backendType = 'webgl2';
   capacityPoints = 0;
+  readonly stats: BackingStats;
   private readonly program: WebGLProgram;
   private readonly vao: WebGLVertexArrayObject;
   private readonly loc: Record<Uniform, WebGLUniformLocation | null>;
   private texture?: WebGLTexture;
+  private readonly timer: TimerQueryExt | null;
+  /** In-flight TIME_ELAPSED queries, oldest first. */
+  private readonly queries: WebGLQuery[] = [];
 
   static create(canvas: HTMLCanvasElement): WebGL2TextureBacking {
     const gl = canvas.getContext('webgl2', { antialias: false, powerPreference: 'high-performance' });
@@ -81,6 +91,8 @@ export class WebGL2TextureBacking implements PointCloudBacking {
       points: at('points'),
     };
     this.vao = gl.createVertexArray();
+    this.timer = gl.getExtension('EXT_disjoint_timer_query_webgl2') as TimerQueryExt | null;
+    this.stats = emptyStats(!!this.timer);
   }
 
   allocate(maxPoints: number): void {
@@ -90,6 +102,7 @@ export class WebGL2TextureBacking implements PointCloudBacking {
     if (height > maxSize) throw new Error(`Point texture needs ${height} rows, GPU allows ${maxSize}`);
     if (this.texture) gl.deleteTexture(this.texture);
     this.capacityPoints = height * TEX_WIDTH;
+    this.stats.allocatedBytes = this.capacityPoints * POINT_FLOATS * 4;
     this.texture = gl.createTexture();
     gl.bindTexture(gl.TEXTURE_2D, this.texture);
     gl.texStorage2D(gl.TEXTURE_2D, 1, gl.RGBA32F, TEX_WIDTH, height);
@@ -102,6 +115,7 @@ export class WebGL2TextureBacking implements PointCloudBacking {
   /** Partial rows are written one at a time, whole rows in a single call. */
   uploadPoints(pointOffset: number, data: Float32Array): void {
     const gl = this.gl;
+    const start = performance.now();
     gl.bindTexture(gl.TEXTURE_2D, this.texture!);
     let remaining = data.length / POINT_FLOATS;
     let idx = pointOffset;
@@ -117,6 +131,9 @@ export class WebGL2TextureBacking implements PointCloudBacking {
       src += width * rows * POINT_FLOATS;
       remaining -= width * rows;
     }
+    this.stats.uploadMs += performance.now() - start;
+    this.stats.uploadCalls++;
+    this.stats.uploadedBytes += data.byteLength;
   }
 
   resize(width: number, height: number): void {
@@ -124,17 +141,28 @@ export class WebGL2TextureBacking implements PointCloudBacking {
   }
 
   render(u: FrameUniforms, ranges: DrawRange[]): void {
-    const { gl, loc } = this;
+    const { gl, timer } = this;
+    this.collectTimings();
+    // Cap in-flight queries so a stalled driver cannot grow the queue unbounded
+    const query = timer && this.queries.length < 8 ? gl.createQuery() : null;
+    if (query) gl.beginQuery(timer!.TIME_ELAPSED_EXT, query);
     gl.clearColor(...CLEAR_COLOR, 1);
     gl.clear(gl.COLOR_BUFFER_BIT);
-    if (!this.texture || ranges.length === 0) return;
+    if (this.texture && ranges.length > 0) this.drawRanges(u, ranges);
+    if (query) {
+      gl.endQuery(timer!.TIME_ELAPSED_EXT);
+      this.queries.push(query);
+    }
+  }
 
+  private drawRanges(u: FrameUniforms, ranges: DrawRange[]): void {
+    const { gl, loc } = this;
     gl.enable(gl.BLEND);
     gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
     gl.useProgram(this.program);
     gl.bindVertexArray(this.vao);
     gl.activeTexture(gl.TEXTURE0);
-    gl.bindTexture(gl.TEXTURE_2D, this.texture);
+    gl.bindTexture(gl.TEXTURE_2D, this.texture!);
     gl.uniform1i(loc.points, 0);
     gl.uniformMatrix4fv(loc.viewProj, false, u.viewProjection);
     gl.uniform4f(loc.camRight, ...u.cameraRight, u.pointSize);
@@ -147,8 +175,27 @@ export class WebGL2TextureBacking implements PointCloudBacking {
     }
   }
 
+  /** Folds finished timer queries into the stats; results become available a few frames later. */
+  private collectTimings(): void {
+    const { gl, timer } = this;
+    if (!timer) return;
+    while (this.queries.length > 0) {
+      const query = this.queries[0];
+      if (!gl.getQueryParameter(query, gl.QUERY_RESULT_AVAILABLE)) break;
+      const ns = gl.getQueryParameter(query, gl.QUERY_RESULT) as number;
+      // A disjoint event (e.g. GPU clock change) invalidates in-flight results
+      if (!gl.getParameter(timer.GPU_DISJOINT_EXT)) {
+        this.stats.gpuMs += ns / 1e6;
+        this.stats.gpuSamples++;
+      }
+      gl.deleteQuery(query);
+      this.queries.shift();
+    }
+  }
+
   dispose(): void {
     const gl = this.gl;
+    for (const query of this.queries) gl.deleteQuery(query);
     if (this.texture) gl.deleteTexture(this.texture);
     gl.deleteProgram(this.program);
     gl.deleteVertexArray(this.vao);

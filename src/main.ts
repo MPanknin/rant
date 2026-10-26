@@ -1,10 +1,12 @@
 import './style.css';
 import { POINT_RADIUS, SLOT_POINTS, SOURCE, WINDOW } from './config';
 import { SweepStream } from './data/stream';
+import { Metrics } from './metrics';
 import { createSurface } from './render/create';
 import { PointCloudTimeline } from './render/timeline';
 import { Channel, type BackendType } from './render/types';
 import { Controls } from './ui/controls';
+import { MetricsPanel } from './ui/metrics';
 import { OrbitCamera } from './view/camera';
 
 const viewport = document.getElementById('viewport')!;
@@ -33,6 +35,8 @@ const controls = new Controls(stream.length, WINDOW.maxBehind * SOURCE.period, {
   onBackend: (type) => void switchBackend(type),
 });
 controls.setBackends(backing.backendType, !!navigator.gpu);
+const metrics = new Metrics();
+const panel = new MetricsPanel();
 
 let switching = false;
 
@@ -41,11 +45,15 @@ async function switchBackend(type: BackendType): Promise<void> {
   if (switching || type === backing.backendType) return;
   switching = true;
   try {
+    const start = performance.now();
     const surface = await createSurface(type);
     canvas.replaceWith(surface.canvas);
     ({ canvas, backing } = surface);
     resize();
+    const reupload = performance.now();
     timeline.setBacking(backing);
+    const end = performance.now();
+    panel.setSwitch(end - start, end - reupload, timeline.residentBytes);
   } finally {
     switching = false;
     controls.setBackends(backing.backendType, !!navigator.gpu);
@@ -71,9 +79,13 @@ function resize(): void {
   camera.setAspect(canvas.width / canvas.height);
 }
 
+let lastFrame = performance.now();
+
 // Playback steps at the sweep period but waits for the next sweep instead of skipping it.
 function frame(now: number): void {
   requestAnimationFrame(frame);
+  const frameMs = now - lastFrame;
+  lastFrame = now;
   if (state.playing && now - state.lastStep >= SOURCE.period * 1000) {
     const next = (state.index + 1) % stream.length;
     if (stream.isLoaded(next)) {
@@ -82,6 +94,7 @@ function frame(now: number): void {
     }
   }
   camera.update();
+  const cpuStart = performance.now();
   const drawn = timeline.render({
     viewProjection: camera.viewProjection,
     cameraRight: camera.right,
@@ -91,10 +104,13 @@ function frame(now: number): void {
     trailDuration: state.trail,
     channel: state.channel,
   });
+  metrics.frame(frameMs, performance.now() - cpuStart, drawn.points, drawn.draws);
+  const snapshot = metrics.sample(now, backing.stats, timeline.residentBytes);
+  if (snapshot) panel.update(snapshot);
   controls.setStatus(
     stream.error
       ? `Stream stopped: ${stream.error.message}`
-      : `${backing.backendType.toUpperCase()} · ${drawn.toLocaleString()} points · buffered ${stream.loadedCount()}/${stream.capacity}`,
+      : `${backing.backendType.toUpperCase()} · buffered ${stream.loadedCount()}/${stream.capacity} sweeps`,
   );
 }
 
