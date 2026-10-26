@@ -1,1 +1,28 @@
-<!doctype html><html lang="en"><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1.0"/><title>Rant · Robot Console</title></head><body><div id="app"></div><script type="module" src="/src/main.ts"></script></body></html>
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" href="data:," />
+    <title>Rant</title>
+  </head>
+  <body>
+    <main id="viewport">
+      <div id="status" class="status"></div>
+    </main>
+    <footer class="bar">
+      <button id="play" type="button" aria-label="Pause">❚❚</button>
+      <input id="scrubber" type="range" min="0" max="0" value="0" aria-label="Sweep" />
+      <span class="readout"><span id="frame">000</span> · <span id="time">0.0 s</span></span>
+      <select id="channel" aria-label="Colour channel">
+        <option value="0">Height</option>
+        <option value="1">Intensity</option>
+        <option value="2">Age</option>
+      </select>
+      <select id="trail" aria-label="Trail">
+        <option value="0">No trail</option>
+      </select>
+    </footer>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
