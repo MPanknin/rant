@@ -69,6 +69,35 @@ body {
   accent-color: #53c3d7;
 }
 
+.toggle {
+  display: flex;
+}
+
+.bar .toggle button {
+  width: auto;
+  border-radius: 0;
+}
+
+.bar .toggle button:first-child {
+  border-radius: 4px 0 0 4px;
+}
+
+.bar .toggle button:last-child {
+  border-left: 0;
+  border-radius: 0 4px 4px 0;
+}
+
+.bar .toggle button.active {
+  background: #1f4b5c;
+  border-color: #53c3d7;
+  color: #e8f6fa;
+}
+
+.bar button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
 .readout {
   white-space: nowrap;
   font-variant-numeric: tabular-nums;

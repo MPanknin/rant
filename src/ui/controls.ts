@@ -1,15 +1,16 @@
-import { Channel } from '../render/types';
+import type { BackendType, Channel } from '../render/types';
 
 export interface ControlEvents {
   onTogglePlay(): void;
   onSeek(index: number): void;
   onChannel(channel: Channel): void;
   onTrail(seconds: number): void;
+  onBackend(type: BackendType): void;
 }
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 
-/** Binds the playback bar (play/pause, scrubber, channel, trail) and the status line in index.html. */
+/** Binds the playback bar (play/pause, scrubber, channel, trail, backend) and the status line in index.html. */
 export class Controls {
   private readonly play = $<HTMLButtonElement>('play');
   private readonly scrubber = $<HTMLInputElement>('scrubber');
@@ -18,6 +19,10 @@ export class Controls {
   private readonly channel = $<HTMLSelectElement>('channel');
   private readonly trail = $<HTMLSelectElement>('trail');
   private readonly status = $<HTMLDivElement>('status');
+  private readonly backends: Record<BackendType, HTMLButtonElement> = {
+    webgpu: $<HTMLButtonElement>('webgpu'),
+    webgl2: $<HTMLButtonElement>('webgl2'),
+  };
 
   constructor(frames: number, maxTrail: number, events: ControlEvents) {
     this.scrubber.max = String(frames - 1);
@@ -26,6 +31,16 @@ export class Controls {
     this.scrubber.oninput = () => events.onSeek(Number(this.scrubber.value));
     this.channel.onchange = () => events.onChannel(Number(this.channel.value) as Channel);
     this.trail.onchange = () => events.onTrail(Number(this.trail.value));
+    for (const [type, button] of Object.entries(this.backends)) button.onclick = () => events.onBackend(type as BackendType);
+  }
+
+  setBackends(active: BackendType, webgpuAvailable: boolean): void {
+    for (const [type, button] of Object.entries(this.backends)) {
+      button.classList.toggle('active', type === active);
+      button.setAttribute('aria-pressed', String(type === active));
+    }
+    this.backends.webgpu.disabled = !webgpuAvailable;
+    this.backends.webgpu.title = webgpuAvailable ? '' : 'WebGPU is not available in this browser';
   }
 
   setPlaying(playing: boolean): void {

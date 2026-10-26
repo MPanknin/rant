@@ -9,10 +9,11 @@ import { OrbitCamera } from './view/camera';
 
 const viewport = document.getElementById('viewport')!;
 const preferred = new URLSearchParams(location.search).get('backend') as BackendType | null;
-const { canvas, backing } = await createSurface(preferred ?? 'webgpu');
+let { canvas, backing } = await createSurface(preferred ?? 'webgpu');
 viewport.append(canvas);
 
-const camera = new OrbitCamera(canvas);
+// Controls listen on the viewport, so they survive canvas swaps when the backend changes.
+const camera = new OrbitCamera(viewport);
 const stream = new SweepStream(SOURCE, WINDOW, () => timeline.sync(stream.loaded()));
 const timeline = new PointCloudTimeline(backing, stream.capacity, SLOT_POINTS);
 
@@ -29,7 +30,27 @@ const controls = new Controls(stream.length, WINDOW.maxBehind * SOURCE.period, {
     state.trail = seconds;
     stream.setTrail(seconds / SOURCE.period);
   },
+  onBackend: (type) => void switchBackend(type),
 });
+controls.setBackends(backing.backendType, !!navigator.gpu);
+
+let switching = false;
+
+/** Swaps the backing at runtime; the timeline re-uploads the resident sweeps to the new one. */
+async function switchBackend(type: BackendType): Promise<void> {
+  if (switching || type === backing.backendType) return;
+  switching = true;
+  try {
+    const surface = await createSurface(type);
+    canvas.replaceWith(surface.canvas);
+    ({ canvas, backing } = surface);
+    resize();
+    timeline.setBacking(backing);
+  } finally {
+    switching = false;
+    controls.setBackends(backing.backendType, !!navigator.gpu);
+  }
+}
 
 function setPlaying(playing: boolean): void {
   state.playing = playing;

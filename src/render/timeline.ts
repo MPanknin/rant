@@ -25,11 +25,22 @@ export class PointCloudTimeline {
   private slotPoints = 0;
 
   constructor(
-    readonly backing: PointCloudBacking,
+    private current: PointCloudBacking,
     private readonly slots: number,
     slotPoints: number,
   ) {
     this.allocate(slotPoints);
+  }
+
+  get backing(): PointCloudBacking {
+    return this.current;
+  }
+
+  /** Moves to another backing: disposes the old one and re-uploads every resident sweep. */
+  setBacking(backing: PointCloudBacking): void {
+    this.current.dispose();
+    this.current = backing;
+    this.allocate(this.slotPoints);
   }
 
   get residentCount(): number {
