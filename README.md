@@ -1,4 +1,4 @@
-# Rant
+# Rant (Raw Attributes No Topology)
 
 API-agnostic GPU point storage with WebGPU and WebGL2 backings.
 
