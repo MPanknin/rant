@@ -11,7 +11,11 @@
     "strict": true,
     "noEmit": true,
     "skipLibCheck": true,
-    "allowImportingTsExtensions": true
+    "allowImportingTsExtensions": true,
+    "types": [
+      "@webgpu/types",
+      "vite/client"
+    ]
   },
   "include": [
     "src/**/*.ts"
