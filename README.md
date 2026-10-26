@@ -1,5 +1,8 @@
 # Rant (Raw Attributes No Topology)
 
+<img width="1720" height="905" alt="image" src="https://github.com/user-attachments/assets/f2698c20-2a51-44be-b2b1-1365c866fe90" />
+
+
 API-agnostic GPU point storage with WebGPU and WebGL2 backings.
 
 Points are stored as flat 16-byte records (`x, y, z, intensity`) in a single allocation and pulled by index in the vertex shader. Each point is drawn as an instanced quad. There is no vertex buffer per chunk and no attribute layout, so a chunk of points is just an offset into the store.
