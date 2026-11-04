@@ -109,10 +109,11 @@ function showCamera(f:Frame){
   el('camera-sync').textContent=f.imageFile||f.imageUrl?'PAIRED FRAME':'NO CAMERA SOURCE';
   el('sensor-indicator').textContent=f.imageFile||f.imageUrl?'LIDAR + CAMERA':'LIDAR ONLY';
   const view=el('camera');view.replaceChildren();
+  const overlay=document.createElement('canvas');overlay.id='camera-projection';overlay.className='camera-projection';view.append(overlay);
   const marker=document.createElement('div');marker.id='camera-marker';marker.className='camera-marker';marker.hidden=true;view.append(marker);
   if(f.imageFile&&!f.image)f.image=URL.createObjectURL(f.imageFile);
-  if(f.image||f.imageUrl){const img=document.createElement('img');img.src=f.image??f.imageUrl!;img.alt='Camera frame '+f.name;img.onerror=()=>{view.textContent='CAMERA IMAGE FAILED TO LOAD'};img.onload=updateCameraProjection;view.append(img)}
-  else view.textContent='NO CAMERA FRAME · Online sample contains LiDAR only';
+  if(f.image||f.imageUrl){const img=document.createElement('img');img.src=f.image??f.imageUrl!;img.alt='Camera frame '+f.name;img.onerror=()=>{img.alt='CAMERA IMAGE FAILED TO LOAD'};img.onload=updateCameraProjection;view.append(img)}
+  else {const empty=document.createElement('div');empty.className='empty';empty.textContent='NO CAMERA FRAME · Online sample contains LiDAR only';view.append(empty)}
   updateCameraProjection();
 }
 function draw(){if(!frames.length)return;if(measurementFrame!==index){clearMeasure();measurementFrame=index}const f=frames[index];if(lastImageFrame&&lastImageFrame!==f&&lastImageFrame.image){URL.revokeObjectURL(lastImageFrame.image);lastImageFrame.image=undefined}lastImageFrame=f;el('frame').textContent='FRAME '+String(index).padStart(3,'0');el('time').textContent=f.time.toFixed(2)+' s';(el('timeline') as HTMLInputElement).value=String(index);showCamera(f);const points=f.points??cache.get(index);if(!points){renderedIndex=-1;geo.setDrawRange(0,0);markers.clear();el('count').textContent='LOADING';return}renderedIndex=index;const pts=points,n=pts.length/4;ensure(n);const pa=geo.attributes.position as THREE.BufferAttribute,ca=geo.attributes.color as THREE.BufferAttribute,pos=pa.array as Float32Array,col=ca.array as Float32Array;for(let i=0;i<n;i++){const j=i*4,k=i*3,z=pts[j+2],h=THREE.MathUtils.clamp((z+3)/8,0,1);pos[k]=pts[j];pos[k+1]=pts[j+1];pos[k+2]=z;if(colorMode==='intensity'){
