@@ -72,7 +72,7 @@ el('stream').onclick=streamOnline;
     const cameraIndex=absoluteLidar&&absoluteCamera?nearestTimestampIndex(absoluteCamera,absoluteLidar[i],0.05):undefined;
     return {time:seconds?.[i]??i*.1,file,imageFile:cameraIndex===undefined?(!absoluteLidar||!absoluteCamera?cameraByName.get(name):undefined):cameraFiles[cameraIndex],name};
   });
-  setFrames(next,'KITTI RAW');el('status').textContent=frames.length+' scans indexed lazily · '+(seconds.length?'KITTI timestamps':'assumed 10 Hz');};
+  setFrames(next,'KITTI RAW');el('status').textContent=frames.length+' scans indexed lazily · '+(seconds?.length?'KITTI timestamps':'assumed 10 Hz');};
 new ResizeObserver(()=>{const v=el('view');if(v.clientWidth&&v.clientHeight){renderer.setSize(v.clientWidth,v.clientHeight);camera.aspect=v.clientWidth/v.clientHeight;camera.updateProjectionMatrix()}}).observe(el('view'));
 // Playback waits on the next scan, so a slow stream buffers instead of skipping
 function loop(now:number){requestAnimationFrame(loop);if(playing&&frames.length&&now-last>=100){const next=(index+1)%frames.length;if(frames[next].points||cache.get(next)){last=now;index=next;cache.seek(next);if(renderedIndex!==next)draw()}}controls.update();renderer.render(scene,camera)}streamOnline();requestAnimationFrame(loop);
