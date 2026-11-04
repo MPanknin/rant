@@ -25,7 +25,9 @@ To validate the seek-priority change, open browser network throttling, start the
 
 The reusable `src/data/timeline-cache.ts` module owns frame priorities, a bounded resident window, concurrent reads, cancellation, failed-frame tracking and seek statistics. It is generic in the decoded frame payload and does not import Three.js, browser UI components or KITTI parsing. `src/main.ts` supplies a loader that reads either a local `File` or an online PCD response and decodes it to interleaved XYZ/intensity samples. This allows later camera, radar, or other temporal adapters to reuse the scheduling logic.
 
-The streaming cache is bounded by **frame count**, not a hard byte budget; exceptionally large frames can still exceed available memory. The initial sample is not an MCAP/ROS reader.
+The streaming cache uses a **128 MiB decoded-frame budget** as well as a playhead-centered window. Prefetch is deferred when the budget is full; the playhead can evict other cached frames. A single frame larger than the budget is rejected. This does not include renderer buffers, image decoding, or in-flight response allocations. The initial sample is not an MCAP/ROS reader.
+
+Run scheduler regression tests with Node 22+ using `npm test`; the tests cover bounded retention, stale completion after reset, and oversized frames. The full browser build still requires `npm run build` and a manual rendering check.
 
 ## Streaming diagnostics
 
