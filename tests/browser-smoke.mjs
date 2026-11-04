@@ -19,13 +19,13 @@ await page.route('https://mock.rant.test/**',async route=>{
 try{
   await page.goto('http://127.0.0.1:4173/',{waitUntil:'domcontentloaded'});
   await page.locator('#play').click(); // stop auto-play to make seeks deterministic
-  await page.waitForFunction(()=>document.querySelector('#count')?.textContent==='2',{timeout:15000});
+  await page.waitForFunction(()=>document.querySelector('#count')?.textContent==='2',null,{timeout:15000});
   for(const index of [7,2,6,0,5,1]){
     await page.locator('#timeline').evaluate((slider,i)=>{slider.value=String(i);slider.dispatchEvent(new Event('input',{bubbles:true}))},index);
     await page.waitForFunction(i=>document.querySelector('#frame')?.textContent==='FRAME '+String(i).padStart(3,'0')&&document.querySelector('#count')?.textContent==='2',index,{timeout:10000});
   }
   await page.locator('#stream').click();
-  await page.waitForFunction(()=>document.querySelector('#count')?.textContent==='2',{timeout:10000});
+  await page.waitForFunction(()=>document.querySelector('#count')?.textContent==='2',null,{timeout:10000});
   await page.locator('#play').click(); // stop newly started playback
   assert.ok(requests>0,'expected mocked frame requests');
   assert.deepEqual(errors,[],'browser console exceptions');
