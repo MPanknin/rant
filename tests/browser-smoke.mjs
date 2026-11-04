@@ -54,6 +54,10 @@ try{
   await page.waitForFunction(()=>document.querySelector('#camera img')?.complete===true,null,{timeout:10000});
   assert.equal(await page.locator('#sensor-indicator').textContent(),'LIDAR + CAMERA');
   assert.equal(await page.locator('#mode').textContent(),'KITTI CAMERA + LIDAR');
+  assert.equal(await page.locator('#project-cloud').isChecked(),true);
+  await page.locator('#project-cloud').uncheck();
+  await page.locator('#project-cloud').check();
+  assert.equal(await page.locator('#camera-projection').count(),1);
   assert.ok(requests>0,'expected mocked frame requests');
   assert.deepEqual(errors,[],'browser console exceptions');
   console.log('Browser smoke passed: load, seek, restart, rendering');
