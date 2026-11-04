@@ -6,6 +6,7 @@ export interface StreamOptions<T> {
   load:(index:number,signal:AbortSignal)=>Promise<{value:T;bytes:number}>;
   sizeOf:(value:T)=>number;
   onChange?:()=>void;
+  release?:(value:T)=>void;
   onError?:(index:number,error:unknown)=>void;
   ahead?:number; behind?:number; concurrency?:number; maxResidentBytes?:number;
 }
@@ -40,12 +41,13 @@ export class TimelineCache<T> {
     if(!Number.isInteger(count)||count<0)throw Error('Invalid frame count');
     this.generation++;
     for(const request of this.active.values())request.abort();
-    this.active.clear();this.values.clear();this.failures.clear();this.deferred.clear();
+    this.active.clear();for(const value of this.values.values())this.options.release?.(value);this.values.clear();this.failures.clear();this.deferred.clear();
     this.count=count;this.cursor=0;this.bytes=0;this.residentBytes=0;
     this.hits=0;this.misses=0;this.seekStart=0;this.seekMs=0;
     this.notify();this.pump();
   }
   get(index:number):T|undefined {return this.values.get(index)}
+  hasFailed(index:number):boolean {return this.failures.has(index)}
   get playhead():number {return this.cursor}
   get stats():StreamStats {
     return {resident:this.values.size,residentBytes:this.residentBytes,active:this.active.size,bytesRead:this.bytes,hits:this.hits,misses:this.misses,lastSeekMs:this.seekMs,failures:this.failures.size};
@@ -68,7 +70,7 @@ export class TimelineCache<T> {
     const value=this.values.get(i);
     if(value===undefined)return;
     this.residentBytes-=this.options.sizeOf(value);
-    this.values.delete(i);
+    this.values.delete(i);this.options.release?.(value);
   }
   private evictOutsideWindow():void {
     for(const i of this.values.keys())if(!this.inside(i))this.remove(i);
@@ -84,14 +86,13 @@ export class TimelineCache<T> {
   private retain(i:number,value:T):void {
     const size=this.options.sizeOf(value);
     if(!Number.isFinite(size)||size<0)throw Error('Invalid frame size');
-    // A single oversized playhead frame is displayed but never cached; the caller
-    // must handle its lifecycle separately if it needs to keep it visible.
-    if(size>this.budget){if(i===this.cursor)this.options.onError?.(i,new Error('Frame exceeds resident memory budget'));this.failures.add(i);return}
+    // Oversized frames are rejected and released, including prefetched frames.
+    if(size>this.budget){if(i===this.cursor)this.options.onError?.(i,new Error('Frame exceeds resident memory budget'));this.failures.add(i);this.options.release?.(value);return}
     // Evict farthest non-playhead entries first, preserving current frame.
     const distance=(j:number)=>Math.min((j-this.cursor+this.count)%this.count,(this.cursor-j+this.count)%this.count);
     const victims=[...this.values.keys()].filter(j=>j!==this.cursor).sort((a,b)=>distance(b)-distance(a));
     if(i===this.cursor)while(this.residentBytes+size>this.budget&&victims.length)this.remove(victims.shift()!);
-    if(this.residentBytes+size>this.budget){this.deferred.add(i);return;}
+    if(this.residentBytes+size>this.budget){this.deferred.add(i);this.options.release?.(value);return;}
     this.values.set(i,value);this.residentBytes+=size;
   }
   private notify():void {this.options.onChange?.()}
@@ -105,9 +106,9 @@ export class TimelineCache<T> {
       const controller=new AbortController(),generation=this.generation;
       this.active.set(i,controller);
       void this.options.load(i,controller.signal).then(({value,bytes})=>{
-        if(generation!==this.generation||controller.signal.aborted)return;
+        if(generation!==this.generation||controller.signal.aborted){this.options.release?.(value);return;}
         this.bytes+=bytes;
-        if(this.inside(i))this.retain(i,value);
+        if(this.inside(i))this.retain(i,value);else this.options.release?.(value);
         if(i===this.cursor&&this.values.has(i)&&this.seekStart){this.seekMs=performance.now()-this.seekStart;this.seekStart=0}
       }).catch(error=>{
         if(generation!==this.generation||controller.signal.aborted)return;

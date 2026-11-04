@@ -49,3 +49,10 @@ test('oversized frames do not cause unbounded retry',async()=>{
   assert.equal(cache.stats.resident,0);
   cache.dispose();
 });
+
+test('releases disposable payloads on eviction, reset and stale completion',async()=>{
+  const released=[];let finish;
+  const c=new TimelineCache({ahead:0,behind:0,concurrency:1,maxResidentBytes:2,sizeOf:()=>1,release:v=>released.push(v),load:i=>i===2?new Promise(resolve=>{finish=resolve}):Promise.resolve({value:i,bytes:1})});
+  c.reset(3);await new Promise(r=>setTimeout(r,0));c.seek(1);await new Promise(r=>setTimeout(r,0));
+  assert.deepEqual(released,[0]);c.seek(2);c.reset(0);finish({value:2,bytes:1});await new Promise(r=>setTimeout(r,0));assert.deepEqual(released,[0,1,2]);
+});

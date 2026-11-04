@@ -1,24 +1,33 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import './style.css';
+import {shell} from './ui/shell';
+import {createCameraCache} from './data/camera-cache';
+import type {Frame,KittiCalibration} from './data/types';
+import {validateManifest} from './data/manifest';
+import {projectKitti,readRawCalibration,readObjectCalibration} from './geometry/calibration';
+import {accumulateInto,relativePose,transformPoint,isRigidPose} from './geometry/poses';
 import { TimelineCache } from './data/timeline-cache';
 import { parseKittiTimestamps, nearestTimestampIndex } from './data/synchronization';
 
-type Frame={time:number;points?:Float32Array;url?:string;file?:File;image?:string;imageFile?:File;imageUrl?:string;calibration?:KittiCalibration;pose?:number[];name:string};
 type Note={id:number;frame:number;label:string;position:[number,number,number]};
 // Online sample: consecutive HDL-64 street scans (binary PCD, KITTI-derived) from Udacity's SFND course repo, served by GitHub with CORS.
 // A host page can point the stream elsewhere by defining window.RANT_STREAM before this script runs.
 const STREAM:{base:string;count:number;source:string}=(globalThis as any).RANT_STREAM??{base:'https://raw.githubusercontent.com/udacity/SFND_Lidar_Obstacle_Detection/ef15da2bc172359e7d6edfdd156a2a243d10977e/src/sensors/data/pcd/data_2/',count:154,source:'udacity/SFND_Lidar_Obstacle_Detection on GitHub'};
-const AHEAD=20,BEHIND=4,PARALLEL=4;// 128 MiB decoded-frame budget plus a playhead-centered prefetch window
+const AHEAD=20,BEHIND=19,PARALLEL=4;// 128 MiB decoded-frame budget plus a playhead-centered prefetch window
 const app=document.querySelector<HTMLDivElement>('#app')!;
-app.innerHTML=`<header><b>◉ RANT <span>/ ROBOT SENSOR CONSOLE</span></b><a href="https://www.cvlibs.net/datasets/kitti/raw_data.php" target="_blank" rel="noopener">KITTI RAW DATA ↗</a></header><main><section id="viewport"><div id="view"></div><div class="float pane">SPATIAL VIEW · <span id="count">—</span> POINTS</div><div class="hint">Drag orbit · Scroll zoom · Right drag pan · Click inspect / measure · Double click annotate</div><div class="tools"><button id="inspect-mode" class="selected">INSPECT</button><button id="measure-mode">MEASURE</button><button id="clear-measure">CLEAR</button><select id="color-mode" aria-label="Point color mode"><option value="height">HEIGHT</option><option value="intensity">INTENSITY</option><option value="range">RANGE</option></select></div><div id="measure-overlay" class="measure-overlay">Click a point to inspect its XYZ and intensity.</div></section><aside><div class="pane">CAMERA / IMAGE_02 <span id="camera-sync">NO CAMERA SOURCE</span></div><div id="camera" class="camera"><canvas id="camera-projection" class="camera-projection"></canvas><div id="camera-marker" class="camera-marker" hidden></div><div class="empty">NO CAMERA FRAME<br/>Import KITTI images to inspect</div></div><div class="panel camera-options"><label><input id="project-cloud" type="checkbox" checked /> PROJECT LIDAR ON CAMERA</label><span id="projection-status">Calibration required</span></div><div class="pane">DATASET / <span id="mode">SYNTHETIC</span></div><div class="panel"><p>Streams ${STREAM.count} consecutive HDL-64 scans from ${STREAM.source}, buffering about 2 s ahead. Or select a local KITTI Raw sync folder containing velodyne_points/data and optionally image_02/data.</p><div class="actions"><button id="stream" class="upload">STREAM LIDAR SEQUENCE</button><button id="fusion" class="upload">LOAD CAMERA + LIDAR EXAMPLE</button><input id="manifest-url" type="url" placeholder="HTTPS URL to recording manifest.json" aria-label="Recording manifest URL"/><button id="load-manifest" class="upload">STREAM MULTIMODAL MANIFEST</button><label class="upload">IMPORT KITTI FOLDER<input id="folder" type="file" webkitdirectory multiple /></label></div><p id="status"></p></div><div class="pane">TEMPORAL RECONSTRUCTION</div><div class="panel"><label><input id="accumulate" type="checkbox"/> ACCUMULATE SCANS (WORLD SPACE)</label><p id="accumulation-status">Requires recording poses. Current frame only.</p></div><div class="pane">POINT INSPECTOR</div><div class="panel"><button id="focus-selection" disabled title="Center the 3D camera on the selected LiDAR return">FOCUS SELECTED POINT</button></div><div class="panel" id="inspection">Select a point in the 3D view.</div><div class="pane">ANNOTATIONS</div><div class="panel"><input id="label" type="text" value="object" placeholder="Label"/><button id="add">ADD AT ORIGIN</button> <button id="export">EXPORT JSON</button><div id="notes"></div></div><div class="pane">COORDINATES</div><div class="panel"><p>KITTI Velodyne: X forward, Y left, Z up. Camera projection uses KITTI calibration when available; ego-motion compensation is not implemented.</p></div></aside></main><footer><button id="prev-frame" title="Previous frame">‹</button><button id="play">▶</button><button id="next-frame" title="Next frame">›</button><select id="playback-speed" aria-label="Playback speed"><option value="0.25">0.25×</option><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option><option value="4">4×</option></select><span id="frame">FRAME 000</span><input id="timeline" type="range" min="0" max="23" value="0"/><span id="time">0.0 s</span><span id="sensor-indicator">LIDAR ONLY</span></footer>`;
+app.innerHTML=shell();
 const el=(id:string)=>document.getElementById(id)!;
-const renderer=new THREE.WebGLRenderer({antialias:true});renderer.setPixelRatio(Math.min(devicePixelRatio,2));renderer.setClearColor(0x0a111c);el('view').appendChild(renderer.domElement);
+function createRenderer(){
+  try{return new THREE.WebGLRenderer({antialias:true})}
+  catch(error){el('transport-status').textContent='WEBGL UNAVAILABLE';el('mode').textContent='WebGL2 is required';el('view').textContent='This browser could not start WebGL2. Enable hardware acceleration or use a WebGL2-capable browser.';throw error}
+}
+const renderer=createRenderer();renderer.setPixelRatio(Math.min(devicePixelRatio,2));renderer.setClearColor(0x0a111c);el('view').appendChild(renderer.domElement);
 const scene=new THREE.Scene();scene.fog=new THREE.FogExp2(0x0a111c,.007);
 const camera=new THREE.PerspectiveCamera(58,1,.1,1200);camera.up.set(0,0,1);camera.position.set(24,-30,19);
 const controls=new OrbitControls(camera,renderer.domElement);controls.target.set(12,0,0);controls.enableDamping=true;controls.update();
 const grid=new THREE.GridHelper(140,70,0x36516a,0x1d2c40);grid.rotateX(Math.PI/2);scene.add(grid,new THREE.AxesHelper(4));
-const GROUND_Z=-1.73;// KITTI Velodyne sits ~1.73 m above the road
+const GROUND_Z=-1.73;grid.position.z=GROUND_Z;// KITTI Velodyne sits ~1.73 m above the road
 // One reusable point buffer: grows to the largest frame, afterwards only its contents are updated
 const geo=new THREE.BufferGeometry();let cap=0;
 function ensure(n:number){if(n<=cap)return;cap=Math.ceil(n*1.1);geo.dispose();geo.setAttribute('position',new THREE.BufferAttribute(new Float32Array(cap*3),3));geo.setAttribute('color',new THREE.BufferAttribute(new Float32Array(cap*3),3))}
@@ -29,35 +38,38 @@ const measurement=new THREE.Group();scene.add(measurement);
 const accumulatedGeometry=new THREE.BufferGeometry();
 const accumulatedCloud=new THREE.Points(accumulatedGeometry,new THREE.PointsMaterial({size:.085,color:0x8bdce5,transparent:true,opacity:.48,depthWrite:false}));
 accumulatedCloud.frustumCulled=false;accumulatedCloud.visible=false;scene.add(accumulatedCloud);
-let accumulatedVersion=0;
+const accumulationBuffer=new Float32Array(20*12000*3);
+accumulatedGeometry.setAttribute('position',new THREE.BufferAttribute(accumulationBuffer,3).setUsage(THREE.DynamicDrawUsage));
+let accumulationDirty=true;
+const trajectoryGeometry=new THREE.BufferGeometry();
+const trajectory=new THREE.Line(trajectoryGeometry,new THREE.LineBasicMaterial({color:0xffbd70,transparent:true,opacity:.75}));trajectory.frustumCulled=false;scene.add(trajectory);
+const vehicleGeometry=new THREE.EdgesGeometry(new THREE.BoxGeometry(4.2,1.8,1.5));
+const vehicle=new THREE.LineSegments(vehicleGeometry,new THREE.LineBasicMaterial({color:0x6b849b}));vehicle.position.set(-.8,0,-.9);scene.add(vehicle);
 function updateAccumulation(){
-  const enabled=(el('accumulate') as HTMLInputElement).checked;
-  const frame=frames[index];
-  if(!enabled||!frame?.pose){accumulatedCloud.visible=false;el('accumulation-status').textContent=enabled?'No vehicle poses available for this recording':'Requires recording poses. Current frame only.';return}
-  const samples:number[]=[];let used=0;
-  const current=frame.pose;
-  const currentWorld=new THREE.Matrix4().set(current[0],current[1],current[2],current[3],current[4],current[5],current[6],current[7],current[8],current[9],current[10],current[11],0,0,0,1);
-  const worldToCurrent=currentWorld.invert();
-  const from=Math.max(0,index-19);
-  for(let i=from;i<=index;i++){
+  accumulationDirty=false;
+  const enabled=(el('accumulate') as HTMLInputElement).checked,frame=frames[index];
+  accumulatedCloud.visible=false;
+  if(!frame?.pose){el('accumulation-status').textContent='No vehicle poses in this recording. Showing a single scan.';return}
+  if(!enabled){el('accumulation-status').textContent='Single scan · enable history to reveal a denser environment.';return}
+  const scans=[];
+  for(let i=Math.max(0,index-19);i<=index;i++){
     const points=frames[i].points??cache.get(i),pose=frames[i].pose;
-    if(!points||!pose)continue;
-    used++;
-    const transform=new THREE.Matrix4().set(pose[0],pose[1],pose[2],pose[3],pose[4],pose[5],pose[6],pose[7],pose[8],pose[9],pose[10],pose[11],0,0,0,1);
-    transform.premultiply(worldToCurrent);
-    const point=new THREE.Vector3();
-    const stride=Math.max(1,Math.ceil(points.length/4/12000));
-    for(let j=0;j<points.length;j+=4*stride){
-      point.set(points[j],points[j+1],points[j+2]).applyMatrix4(transform);
-      samples.push(point.x,point.y,point.z);
-    }
+    if(points&&pose)scans.push({points,pose});
   }
-  accumulatedGeometry.setAttribute('position',new THREE.Float32BufferAttribute(samples,3));
-  accumulatedCloud.visible=used>0;
-  el('accumulation-status').textContent=used+' / '+(index-from+1)+' scans accumulated · '+(samples.length/3).toLocaleString()+' points · aligned to current Velodyne frame';
-  accumulatedVersion++;
+  const {used,count}=accumulateInto(accumulationBuffer,frame.pose,scans);
+  const attr=accumulatedGeometry.attributes.position as THREE.BufferAttribute;
+  attr.clearUpdateRanges();attr.addUpdateRange(0,count*3);attr.needsUpdate=true;
+  accumulatedGeometry.setDrawRange(0,count);accumulatedCloud.visible=count>0;
+  el('accumulation-status').textContent=used+' / '+Math.min(20,index+1)+' scans accumulated · '+count.toLocaleString()+' returns · sensor following';
 }
-(el('accumulate') as HTMLInputElement).onchange=()=>{updateAccumulation();draw()};
+function updateTrajectory(){
+  const current=frames[index]?.pose;trajectory.visible=!!current;
+  if(!current)return;
+  const points=frames.filter(f=>f.pose).map(f=>new THREE.Vector3(...transformPoint(relativePose(current,f.pose!),0,0,0)));
+  trajectoryGeometry.setFromPoints(points);
+}
+(el('accumulate') as HTMLInputElement).onchange=()=>{accumulationDirty=true;updateAccumulation()};
+el('reset-view').onclick=()=>{camera.position.set(24,-30,19);controls.target.set(12,0,0);controls.update()};
 const selectedPoint=new THREE.Mesh(new THREE.SphereGeometry(.24,12,10),new THREE.MeshBasicMaterial({color:0xffad38,depthTest:false}));selectedPoint.visible=false;selectedPoint.renderOrder=10;scene.add(selectedPoint);
 const measureMaterial=new THREE.LineBasicMaterial({color:0xffc46b,depthTest:false});
 const measurePointMaterial=new THREE.MeshBasicMaterial({color:0xffc46b,depthTest:false});
@@ -65,9 +77,9 @@ let toolMode:'inspect'|'measure'='inspect';
 let colorMode:'height'|'intensity'|'range'='height';
 (el('color-mode') as HTMLSelectElement).onchange=e=>{colorMode=(e.target as HTMLSelectElement).value as typeof colorMode;renderedIndex=-1;draw()};
 let measurePoints:THREE.Vector3[]=[];
-function clearMeasure(){measurePoints=[];measurement.clear();el('measure-overlay').textContent='Click two LiDAR points to measure their distance.'}
+function clearMeasure(){measurePoints=[];for(const child of measurement.children)(child as THREE.Mesh).geometry.dispose();measurement.clear();el('measure-overlay').textContent=toolMode==='measure'?'Click two LiDAR points to measure their distance.':'Click a point in either view to inspect XYZ and intensity.'}
 function updateMeasure(){
-  measurement.clear();
+  for(const child of measurement.children)(child as THREE.Mesh).geometry.dispose();measurement.clear();
   for(const p of measurePoints){const m=new THREE.Mesh(new THREE.SphereGeometry(.18,8,6),measurePointMaterial);m.position.copy(p);measurement.add(m)}
   if(measurePoints.length===2){
     const line=new THREE.Line(new THREE.BufferGeometry().setFromPoints(measurePoints),measureMaterial);
@@ -90,25 +102,27 @@ const cache=new TimelineCache<Float32Array>({
     let buf:ArrayBuffer;
     if(f.file){buf=await f.file.arrayBuffer();if(signal.aborted)throw new DOMException('Aborted','AbortError');if(buf.byteLength%16)throw Error('Invalid Velodyne binary: '+f.name)}
     else {const r=await fetch(f.url!,{signal});if(!r.ok)throw Error('HTTP '+r.status+' for scan '+f.name);buf=await r.arrayBuffer()}
-    return {value:f.file||f.url?.endsWith('.bin')?new Float32Array(buf):parsePCD(buf),bytes:buf.byteLength};
+    const binary=!!f.file||!!f.url&&/\.bin(?:[?#]|$)/i.test(f.url);
+    if(binary&&(!buf.byteLength||buf.byteLength%16))throw Error('Invalid Velodyne binary: '+f.name);
+    return {value:binary?new Float32Array(buf):parsePCD(buf),bytes:buf.byteLength};
   },
-  onChange:()=>{updateBufferStatus();if(frames[index]&&cache.get(index)&&renderedIndex!==index)draw()},
+  onChange:()=>{accumulationDirty=true;updateBufferStatus();if(frames[index]&&cache.get(index)&&renderedIndex!==index)draw()},
   onError:(i,error)=>{setPlaying(false);el('status').textContent='Frame '+frames[i]?.name+' failed: '+String(error)}
 });
-let renderedIndex=-1;let lastImageFrame:Frame|undefined;let measurementFrame=-1;let shownCameraFrame:Frame|undefined;
-function updateBufferStatus(){const stats=cache.stats;const source=frames[0]?.file?'local KITTI folder':frames[0]?.imageUrl?'public KITTI paired sample':STREAM.source;el('status').textContent=`${stats.resident} / ${frames.length} cached · ${(stats.residentBytes/1048576).toFixed(1)} / 128 MiB resident · ${stats.active} active · ${(stats.bytesRead/1048576).toFixed(1)} MiB read · hits ${stats.hits} / misses ${stats.misses} · last seek ${stats.lastSeekMs.toFixed(0)} ms · ${stats.failures} failed · ${source}`;}
-type KittiCalibration={p:number[];r:number[];t:number[]};
+const cameraCache=createCameraCache(i=>frames[i],()=>{if(frames[index]){showCamera(frames[index]);updateBufferStatus()}});
+let renderedIndex=-1;let measurementFrame=-1;let shownCameraFrame:Frame|undefined;let shownCameraStatus='';
+function updateBufferStatus(){
+  const stats=cache.stats;
+  const cameraStats=cameraCache.stats;
+  el('status').textContent=`LiDAR ${stats.resident} / ${frames.length} cached · ${(stats.residentBytes/1048576).toFixed(1)} / 128 MiB · ${stats.active} reads · ${stats.failures} failed · Camera ${(cameraStats.residentBytes/1048576).toFixed(1)} / 24 MiB · ${cameraStats.failures} failed`;
+  // Cache notifications may fire while the camera cache is being reset.
+  const f=frames[index];
+  if(f)el('frame-metadata').textContent=`${frames.length} frames · ${frames.at(-1)!.time.toFixed(1)} s\nCalibration ${f.calibration?'present':'missing'} · Pose ${f.pose?'GPS / IMU or supplied':'unavailable'}\nCamera offset ${f.cameraTime===undefined?'not provided':((f.cameraTime-f.time)*1000).toFixed(1)+' ms'}`;
+}
 const KITTI_P2=[721.5377,0,609.5593,44.85728,0,721.5377,172.854,0.2163791,0,0,1,0.002745884];
 const KITTI_R=[.9999239,.00983776,-.007445048,-.009869795,.9999421,-.004278459,.007402527,.004351614,.9999631];
 const KITTI_T=[.007533745,-.9999714,-.000616602,-.004069766,.01480249,.0007280733,-.9998902,-.07631618,.9998621,.00752379,.01480755,-.2717806];
 const SAMPLE_CALIBRATION:KittiCalibration={p:KITTI_P2,r:KITTI_R,t:KITTI_T};
-function projectKitti(x:number,y:number,z:number,calibration:KittiCalibration):[number,number]|undefined{
-  const a=calibration.t,c=[a[0]*x+a[1]*y+a[2]*z+a[3],a[4]*x+a[5]*y+a[6]*z+a[7],a[8]*x+a[9]*y+a[10]*z+a[11]];
-  const r=calibration.r,q=[r[0]*c[0]+r[1]*c[1]+r[2]*c[2],r[3]*c[0]+r[4]*c[1]+r[5]*c[2],r[6]*c[0]+r[7]*c[1]+r[8]*c[2]];
-  const p=calibration.p,den=p[8]*q[0]+p[9]*q[1]+p[10]*q[2]+p[11];
-  if(den<=0)return;
-  return [(p[0]*q[0]+p[1]*q[1]+p[2]*q[2]+p[3])/den,(p[4]*q[0]+p[5]*q[1]+p[6]*q[2]+p[7])/den];
-}
 function updateCameraProjection(){
   const canvas=el('camera-projection') as HTMLCanvasElement;
   const ctx=canvas.getContext('2d');
@@ -118,7 +132,7 @@ function updateCameraProjection(){
   const enabled=(el('project-cloud') as HTMLInputElement).checked;
   canvas.width=view.clientWidth*devicePixelRatio;canvas.height=view.clientHeight*devicePixelRatio;
   canvas.style.width=view.clientWidth+'px';canvas.style.height=view.clientHeight+'px';
-  if(!enabled||!f?.calibration||!points||!img?.naturalWidth||!img.naturalHeight){
+  if(!enabled||shownCameraFrame!==f||!f?.calibration||!points||!img?.naturalWidth||!img.naturalHeight){
     el('projection-status').textContent=!enabled?'Projection hidden':f?.calibration?'Waiting for paired sensors':'Calibration required';
     return;
   }
@@ -131,8 +145,8 @@ function updateCameraProjection(){
     if(!uv||uv[0]<0||uv[1]<0||uv[0]>=img.naturalWidth||uv[1]>=img.naturalHeight)continue;
     const distance=Math.hypot(points[i],points[i+1],points[i+2]);
     const hue=Math.max(0,220-Math.min(distance/75,1)*220);
-    ctx.fillStyle='hsla('+hue+',95%,62%,.8)';
-    ctx.fillRect(ox+uv[0]*scale,oy+uv[1]*scale,2,2);
+    ctx.fillStyle='hsla('+hue+',95%,62%,.65)';
+    ctx.fillRect(ox+uv[0]*scale,oy+uv[1]*scale,1.25,1.25);
     visible++;
   }
   el('projection-status').textContent=visible.toLocaleString()+' projected points';
@@ -144,6 +158,7 @@ el('focus-selection').onclick=()=>{
   camera.position.add(delta);controls.target.copy(selectedPoint.position);controls.update();
 };
 function selectProjectedPoint(pointIndex:number,points:Float32Array){
+  (document.querySelector('.inspector-details') as HTMLDetailsElement).open=true;
   const k=pointIndex*4;
   const p=new THREE.Vector3(points[k],points[k+1],points[k+2]);
   selectedPoint.position.copy(p);selectedPoint.visible=true;(el('focus-selection') as HTMLButtonElement).disabled=false;
@@ -178,50 +193,30 @@ el('camera').addEventListener('click',e=>{
 });
 
 function showCamera(f:Frame){
-  if(shownCameraFrame===f)return;
+  const paired=!!(f.imageFile||f.imageUrl),image=cameraCache.get(index);
+  const ready=!!image?.naturalWidth;
+  el('camera-sync').textContent=paired?(ready?'FRAME '+String(index).padStart(3,'0')+' · SYNC':cameraCache.hasFailed(index)?'IMAGE FAILED':'BUFFERING'):'NO CAMERA';
+  el('sensor-indicator').textContent=paired?'LIDAR + CAMERA':'LIDAR ONLY';
+  const cameraStatus=el('camera-sync').textContent??'';
+  if(shownCameraFrame===f&&shownCameraStatus===cameraStatus&&el('camera').querySelector('img')===(ready?image:null))return;
+  shownCameraStatus=cameraStatus;
   shownCameraFrame=f;
-  el('camera-sync').textContent=f.imageFile||f.imageUrl?'PAIRED FRAME':'NO CAMERA SOURCE';
-  el('sensor-indicator').textContent=f.imageFile||f.imageUrl?'LIDAR + CAMERA':'LIDAR ONLY';
   const view=el('camera');view.replaceChildren();
   const overlay=document.createElement('canvas');overlay.id='camera-projection';overlay.className='camera-projection';view.append(overlay);
   const marker=document.createElement('div');marker.id='camera-marker';marker.className='camera-marker';marker.hidden=true;view.append(marker);
-  if(f.imageFile&&!f.image)f.image=URL.createObjectURL(f.imageFile);
-  if(f.image||f.imageUrl){const img=document.createElement('img');img.src=f.image??f.imageUrl!;img.alt='Camera frame '+f.name;img.onerror=()=>{img.alt='CAMERA IMAGE FAILED TO LOAD'};img.onload=updateCameraProjection;view.append(img)}
-  else {const empty=document.createElement('div');empty.className='empty';empty.textContent='NO CAMERA FRAME · Online sample contains LiDAR only';view.append(empty)}
+  if(ready)view.append(image);
+  else {const empty=document.createElement('div');empty.className='empty';empty.textContent=paired?(cameraCache.hasFailed(index)?'CAMERA IMAGE FAILED TO LOAD':'BUFFERING CAMERA…'):'NO CAMERA FRAME';view.append(empty)}
   updateCameraProjection();
 }
-function draw(){if(!frames.length)return;if(measurementFrame!==index){clearMeasure();selectedPoint.visible=false;(el('focus-selection') as HTMLButtonElement).disabled=true;measurementFrame=index}const f=frames[index];if(lastImageFrame&&lastImageFrame!==f&&lastImageFrame.image){URL.revokeObjectURL(lastImageFrame.image);lastImageFrame.image=undefined}lastImageFrame=f;el('frame').textContent='FRAME '+String(index).padStart(3,'0');el('time').textContent=f.time.toFixed(2)+' s';(el('timeline') as HTMLInputElement).value=String(index);showCamera(f);const points=f.points??cache.get(index);if(!points){renderedIndex=-1;geo.setDrawRange(0,0);markers.clear();el('count').textContent='LOADING';return}renderedIndex=index;const pts=points,n=pts.length/4;ensure(n);const pa=geo.attributes.position as THREE.BufferAttribute,ca=geo.attributes.color as THREE.BufferAttribute,pos=pa.array as Float32Array,col=ca.array as Float32Array;for(let i=0;i<n;i++){const j=i*4,k=i*3,z=pts[j+2],h=THREE.MathUtils.clamp((z+3)/8,0,1);pos[k]=pts[j];pos[k+1]=pts[j+1];pos[k+2]=z;if(colorMode==='intensity'){
+function draw(){if(!frames.length)return;if(measurementFrame!==index){clearMeasure();selectedPoint.visible=false;(el('focus-selection') as HTMLButtonElement).disabled=true;measurementFrame=index}const f=frames[index];el('frame').textContent='FRAME '+String(index).padStart(3,'0');el('time').textContent=f.time.toFixed(2)+' s';(el('timeline') as HTMLInputElement).value=String(index);showCamera(f);const points=f.points??cache.get(index);if(!points){renderedIndex=-1;geo.setDrawRange(0,0);markers.clear();el('count').textContent='LOADING';accumulatedCloud.visible=false;trajectory.visible=false;return}renderedIndex=index;const pts=points,n=pts.length/4;ensure(n);const pa=geo.attributes.position as THREE.BufferAttribute,ca=geo.attributes.color as THREE.BufferAttribute,pos=pa.array as Float32Array,col=ca.array as Float32Array;for(let i=0;i<n;i++){const j=i*4,k=i*3,z=pts[j+2],h=THREE.MathUtils.clamp((z+3)/8,0,1);pos[k]=pts[j];pos[k+1]=pts[j+1];pos[k+2]=z;if(colorMode==='intensity'){
     const v=THREE.MathUtils.clamp(pts[j+3],0,1);col[k]=v;col[k+1]=v;col[k+2]=v;
   }else if(colorMode==='range'){
     const v=THREE.MathUtils.clamp(Math.hypot(pts[j],pts[j+1],z)/90,0,1);
     col[k]=v;col[k+1]=.8*(1-v);col[k+2]=1-v;
-  }else{col[k]=.12+.65*h;col[k+1]=.7-.23*h;col[k+2]=.95-.25*h}}for(const a of [pa,ca]){a.clearUpdateRanges();a.addUpdateRange(0,n*3);a.needsUpdate=true}geo.setDrawRange(0,n);markers.clear();for(const note of notes.filter(x=>x.frame===index)){const m=new THREE.Mesh(markerGeo,markerMat);m.position.set(...note.position);markers.add(m)}el('count').textContent=n.toLocaleString();if(f.calibration)updateCameraProjection();updateAccumulation();const list=el('notes');list.replaceChildren();for(const note of notes){const row=document.createElement('div');row.className='annotation';row.textContent='#'+note.id+' · '+note.label+' · frame '+note.frame;list.append(row)}}
+  }else{col[k]=.12+.65*h;col[k+1]=.7-.23*h;col[k+2]=.95-.25*h}}for(const a of [pa,ca]){a.clearUpdateRanges();a.addUpdateRange(0,n*3);a.needsUpdate=true}geo.setDrawRange(0,n);geo.boundingSphere=null;markers.clear();for(const note of notes.filter(x=>x.frame===index)){const m=new THREE.Mesh(markerGeo,markerMat);m.position.set(...note.position);markers.add(m)}el('count').textContent=n.toLocaleString();if(f.calibration)updateCameraProjection();updateAccumulation();updateTrajectory();const list=el('notes');list.replaceChildren();for(const note of notes){const row=document.createElement('div');row.className='annotation';row.textContent='#'+note.id+' · '+note.label+' · frame '+note.frame;list.append(row)}}
 // Binary PCD → interleaved x,y,z,intensity, the KITTI .bin layout used everywhere else
 function parsePCD(buf:ArrayBuffer){const text=new TextDecoder().decode(new Uint8Array(buf,0,Math.min(buf.byteLength,4096))),at=text.indexOf('\nDATA ');if(at<0)throw Error('Not a PCD file');const lines=text.slice(0,at).split('\n'),get=(k:string)=>lines.find(l=>l.startsWith(k+' '))?.trim().split(/\s+/).slice(1)??[];const eol=text.indexOf('\n',at+1),mode=text.slice(at+6,eol).trim();if(mode!=='binary')throw Error('Unsupported PCD data: '+mode);const fields=get('FIELDS'),size=get('SIZE').map(Number),type=get('TYPE'),count=get('COUNT').map(Number),n=Number(get('POINTS')[0]);let stride=0;const off:Record<string,number>={};fields.forEach((f,i)=>{off[f]=stride;stride+=size[i]*(count[i]||1)});const isF32=(f:string)=>{const i=fields.indexOf(f);return i>=0&&type[i]==='F'&&size[i]===4};if(!isF32('x')||!isF32('y')||!isF32('z'))throw Error('PCD needs float32 x, y, z');const hasI=isF32('intensity'),v=new DataView(buf,eol+1),out=new Float32Array(n*4);if(v.byteLength<n*stride)throw Error('PCD file is truncated');for(let p=0,b=0;p<n;p++,b+=stride){out[p*4]=v.getFloat32(b+off.x,true);out[p*4+1]=v.getFloat32(b+off.y,true);out[p*4+2]=v.getFloat32(b+off.z,true);out[p*4+3]=hasI?v.getFloat32(b+off.intensity,true):0}return out}
-function calibrationEntries(text:string):Map<string,number[]>{
-  const entries=new Map<string,number[]>();
-  for(const line of text.split(/\r?\n/)){
-    const match=/^\s*([\w]+):\s*(.*)$/.exec(line);
-    if(!match)continue;
-    const numbers=match[2].trim().split(/\s+/).map(Number);
-    if(numbers.length&&numbers.every(Number.isFinite))entries.set(match[1],numbers);
-  }
-  return entries;
-}
-function readRawCalibration(cameraText:string,velodyneText:string):KittiCalibration{
-  const cam=calibrationEntries(cameraText),velo=calibrationEntries(velodyneText);
-  const p=cam.get('P_rect_02'),r=cam.get('R_rect_00'),rotation=velo.get('R'),translation=velo.get('T');
-  if(p?.length!==12||r?.length!==9||rotation?.length!==9||translation?.length!==3)throw Error('KITTI Raw calibration missing P_rect_02, R_rect_00, R or T');
-  const t=[rotation[0],rotation[1],rotation[2],translation[0],rotation[3],rotation[4],rotation[5],translation[1],rotation[6],rotation[7],rotation[8],translation[2]];
-  return {p,r,t};
-}
-function readObjectCalibration(text:string):KittiCalibration{
-  const entries=calibrationEntries(text);
-  const p=entries.get('P2'),r=entries.get('R0_rect'),t=entries.get('Tr_velo_to_cam');
-  if(p?.length!==12||r?.length!==9||t?.length!==12)throw Error('KITTI Object calibration missing P2, R0_rect or Tr_velo_to_cam');
-  return {p,r,t};
-}
-function setFrames(next:Frame[],mode:string){if(lastImageFrame?.image){URL.revokeObjectURL(lastImageFrame.image);lastImageFrame.image=undefined}lastImageFrame=undefined;shownCameraFrame=undefined;frames=next;accumulatedCloud.visible=false;selectedPoint.visible=false;(el('focus-selection') as HTMLButtonElement).disabled=true;notes=[];index=0;renderedIndex=-1;measurementFrame=-1;cache.reset(next[0]?.url||next[0]?.file?next.length:0);(el('timeline') as HTMLInputElement).max=String(frames.length-1);el('mode').textContent=mode;
+function setFrames(next:Frame[],mode:string){setPlaying(false);shownCameraFrame=undefined;frames=next;accumulatedCloud.visible=false;selectedPoint.visible=false;(el('focus-selection') as HTMLButtonElement).disabled=true;notes=[];index=0;renderedIndex=-1;measurementFrame=-1;cameraCache.reset(0);cache.reset(next[0]?.url||next[0]?.file?next.length:0);cameraCache.reset(next.length);accumulationDirty=true;(el('timeline') as HTMLInputElement).max=String(frames.length-1);el('mode').textContent=mode;el('recording-capabilities').textContent=[next.some(f=>f.url||f.file)?'LIDAR':'',next.some(f=>f.imageFile||f.imageUrl)?'RGB CAMERA':'',next.some(f=>f.calibration)?'CALIBRATED':'',next.some(f=>f.pose)?'POSES':''].filter(Boolean).join(' · ');
   const matched=next.filter(f=>f.imageFile||f.imageUrl).length;
   el('camera-sync').textContent=matched+' / '+next.length+' MATCHED';
   geo.setDrawRange(0,0);el('count').textContent='—';draw()}
@@ -230,7 +225,7 @@ function seekFrame(next:number){
   if(!frames.length)return;
   last=performance.now();
   index=Math.max(0,Math.min(frames.length-1,next));
-  cache.seek(index);
+  cache.seek(index);cameraCache.seek(index);
   draw();
 }
 el('prev-frame').onclick=()=>{setPlaying(false);seekFrame(index-1)};
@@ -244,33 +239,10 @@ document.addEventListener('keydown',e=>{
   else if(e.code==='Space'){e.preventDefault();setPlaying(!playing)}
   else if(e.key.toLowerCase()==='f'&&selectedPoint.visible){e.preventDefault();el('focus-selection').click()}
 });
-function streamOnline(){el('status').textContent='Connecting to '+STREAM.source;setFrames(Array.from({length:STREAM.count},(_,i)=>{const name=String(i).padStart(10,'0');return {time:i*.1,name,url:STREAM.base+name+'.pcd'}}),'ONLINE SAMPLE');setPlaying(true)}
-type RecordingManifest={name?:string;frames:Array<{time:number;name?:string;lidar:string;camera?:string;pose?:number[]}>;calibration?:KittiCalibration};
-function validateManifest(raw:unknown,manifestUrl:string):{name:string;frames:Frame[]}{
-  if(!raw||typeof raw!=='object')throw Error('Manifest must be a JSON object');
-  const manifest=raw as RecordingManifest;
-  if(!Array.isArray(manifest.frames)||manifest.frames.length<2||manifest.frames.length>20000)throw Error('Manifest needs 2–20000 frames');
-  const base=new URL(manifestUrl);
-  const resolve=(path:string)=>{
-    if(typeof path!=='string'||!path.trim())throw Error('Missing sensor URL');
-    const url=new URL(path,base);
-    if(!['https:','http:'].includes(url.protocol))throw Error('Only HTTP(S) sensor URLs supported');
-    return url.href;
-  };
-  const calibration=manifest.calibration;
-  if(calibration&&(!Array.isArray(calibration.p)||calibration.p.length!==12||!Array.isArray(calibration.r)||calibration.r.length!==9||!Array.isArray(calibration.t)||calibration.t.length!==12||![...calibration.p,...calibration.r,...calibration.t].every(Number.isFinite)))throw Error('Invalid KITTI calibration');
-  let previous=-Infinity;
-  const frames=manifest.frames.map((item,i)=>{
-    if(!item||!Number.isFinite(item.time)||item.time<previous)throw Error('Frame timestamps must be finite and sorted');
-    previous=item.time;
-    if(item.pose&&(!Array.isArray(item.pose)||item.pose.length!==12||!item.pose.every(Number.isFinite)))throw Error('Pose must be a finite 3×4 world-from-Velodyne matrix');
-    const url=resolve(item.lidar);
-    if(!/\.(bin|pcd)(?:[?#]|$)/i.test(url))throw Error('LiDAR URL must end in .bin or .pcd');
-    return {time:item.time,name:item.name??String(i).padStart(6,'0'),url,imageUrl:item.camera?resolve(item.camera):undefined,calibration,pose:item.pose};
-  });
-  return {name:manifest.name??'REMOTE MULTIMODAL',frames};
-}
+let recordingRequest=0;
+function streamOnline(){recordingRequest++;el('status').textContent='Connecting to '+STREAM.source;setFrames(Array.from({length:STREAM.count},(_,i)=>{const name=String(i).padStart(10,'0');return {time:i*.1,name,url:STREAM.base+name+'.pcd'}}),'ONLINE SAMPLE');setPlaying(true)}
 el('load-manifest').onclick=async()=>{
+  const request=++recordingRequest;
   const button=el('load-manifest') as HTMLButtonElement;
   try{
     button.disabled=true;
@@ -282,18 +254,40 @@ el('load-manifest').onclick=async()=>{
     const response=await fetch(parsed.href);
     if(!response.ok)throw Error('Manifest HTTP '+response.status);
     const result=validateManifest(await response.json(),parsed.href);
-    setPlaying(false);setFrames(result.frames,result.name);
+    if(request!==recordingRequest)return;setPlaying(false);setFrames(result.frames,result.name);
     el('status').textContent=result.frames.length+' remote frames indexed · '+result.frames.filter(f=>f.imageUrl).length+' camera frames · '+result.frames.filter(f=>f.pose).length+' poses';
-  }catch(error){el('status').textContent='Manifest error: '+String(error)}
+  }catch(error){if(request===recordingRequest)el('status').textContent='Manifest error: '+String(error)}
   finally{button.disabled=false}
 };
-function loadPairedExample(){
+function loadPairedExample(){recordingRequest++;
   setPlaying(false);
   const base='https://raw.githubusercontent.com/azureology/kitti-velo2cam/master/';
   setFrames([{time:0,name:'000007',url:base+'data_object_velodyne/testing/velodyne/000007.bin',imageUrl:base+'data_object_image_2/testing/image_2/000007.png',calibration:SAMPLE_CALIBRATION}],'KITTI CAMERA + LIDAR');
   el('status').textContent='Loading paired KITTI example from azureology/kitti-velo2cam';
 }
 el('fusion').onclick=loadPairedExample;
+async function loadShowcase(){
+  const request=++recordingRequest;
+  try{
+    setPlaying(false);el('status').textContent='Loading real KITTI drive…';
+    const url=new URL('demo/manifest.json',document.baseURI).href;
+    const response=await fetch(url);if(!response.ok)throw Error('Dataset HTTP '+response.status);
+    const result=validateManifest(await response.json(),url);if(request!==recordingRequest)return;
+    setFrames(result.frames,result.name);setPlaying(true);
+  }catch(error){if(request===recordingRequest){el('mode').textContent='SHOWCASE UNAVAILABLE';el('status').textContent=String(error)+' · Use recordings to retry or import data.';el('transport-status').textContent='DATA ERROR'}}
+}
+el('showcase').onclick=()=>void loadShowcase();
+(el('calibration-files') as HTMLInputElement).onchange=async e=>{
+  const request=recordingRequest,files=Array.from((e.target as HTMLInputElement).files??[]);
+  try{
+    const cam=files.find(f=>f.name==='calib_cam_to_cam.txt'),velo=files.find(f=>f.name==='calib_velo_to_cam.txt');
+    const calibration=cam&&velo?readRawCalibration(await cam.text(),await velo.text()):files.length===1?readObjectCalibration(await files[0].text()):undefined;
+    if(!calibration)throw Error('Select both Raw calibration files, or one Object calibration file');
+    if(request!==recordingRequest)return;
+    for(const frame of frames)frame.calibration=calibration;
+    el('import-status').textContent='Calibration applied to '+frames.length+' frames';updateCameraProjection();updateBufferStatus();
+  }catch(error){el('import-status').textContent=String(error)}
+};
 function annotate(p:THREE.Vector3){notes.push({id:nextId++,frame:index,label:(el('label') as HTMLInputElement).value||'object',position:[p.x,p.y,p.z]});draw()}
 el('add').onclick=()=>annotate(new THREE.Vector3(0,0,0));
 // Double click snaps to the nearest scan point under the cursor, otherwise to the ground plane
@@ -321,7 +315,7 @@ el('export').onclick=()=>{const blob=new Blob([JSON.stringify({schema:'rant/anno
 el('play').onclick=()=>setPlaying(!playing);
 el('stream').onclick=streamOnline;
 (el('timeline') as HTMLInputElement).oninput=e=>{const next=Number((e.target as HTMLInputElement).value);if(next!==index)seekFrame(next)};
-(el('folder') as HTMLInputElement).onchange=async e=>{const files=Array.from((e.target as HTMLInputElement).files||[]);const scans=files.filter(f=>/velodyne_points\/data\/[^/]+\.bin$/i.test(f.webkitRelativePath)).sort((a,b)=>a.name.localeCompare(b.name));const images=new Map(files.filter(f=>/image_02\/data\/[^/]+\.(png|jpe?g)$/i.test(f.webkitRelativePath)).map(f=>[f.name.replace(/\.[^.]+$/,''),f]));if(!scans.length){el('status').textContent='No KITTI .bin scans found';return}setPlaying(false);
+(el('folder') as HTMLInputElement).onchange=async e=>{const request=++recordingRequest;const files=Array.from((e.target as HTMLInputElement).files||[]);const scans=files.filter(f=>/velodyne_points\/data\/[^/]+\.bin$/i.test(f.webkitRelativePath)).sort((a,b)=>a.name.localeCompare(b.name));const images=new Map(files.filter(f=>/image_02\/data\/[^/]+\.(png|jpe?g)$/i.test(f.webkitRelativePath)).map(f=>[f.name.replace(/\.[^.]+$/,''),f]));if(!scans.length){el('status').textContent='No KITTI .bin scans found';return}setPlaying(false);
   const stampFile=files.find(f=>/velodyne_points\/timestamps\.txt$/i.test(f.webkitRelativePath));
   const lidarTimes=stampFile?parseKittiTimestamps(await stampFile.text(),false):undefined;
   const absoluteLidar=lidarTimes?.length===scans.length?lidarTimes:undefined;
@@ -343,16 +337,35 @@ el('stream').onclick=streamOnline;
   let poses:number[][]|undefined;
   if(poseFile){
     const parsed=(await poseFile.text()).trim().split(/\r?\n/).map(line=>line.trim().split(/\s+/).map(Number));
-    if(parsed.length===scans.length&&parsed.every(p=>p.length===12&&p.every(Number.isFinite)))poses=parsed;
+    if(parsed.length===scans.length&&parsed.every(isRigidPose))poses=parsed;
     else el('status').textContent='Pose file ignored: expected one 3×4 world-from-Velodyne matrix per scan';
   }
   const next:Frame[]=scans.map((file,i)=>{
     const name=file.name.replace(/\.bin$/i,'');
     const cameraIndex=absoluteLidar&&absoluteCamera?nearestTimestampIndex(absoluteCamera,absoluteLidar[i],0.05):undefined;
-    return {time:seconds?.[i]??i*.1,file,imageFile:cameraIndex===undefined?(!absoluteLidar||!absoluteCamera?cameraByName.get(name):undefined):cameraFiles[cameraIndex],calibration,pose:poses?.[i],name};
+    return {time:seconds?.[i]??i*.1,cameraTime:cameraIndex!==undefined&&absoluteCamera&&absoluteLidar?absoluteCamera[cameraIndex]-absoluteLidar[0]:undefined,file,imageFile:cameraIndex===undefined?(!absoluteLidar||!absoluteCamera?cameraByName.get(name):undefined):cameraFiles[cameraIndex],calibration,pose:poses?.[i],name};
   });
-  setFrames(next,'KITTI RAW');el('status').textContent=frames.length+' scans indexed lazily · '+(seconds?.length?'KITTI timestamps':'assumed 10 Hz')+' · '+(calibration?'calibrated camera':'no camera calibration');};
+  if(request!==recordingRequest)return;setFrames(next,'KITTI RAW');el('status').textContent=frames.length+' scans indexed lazily · '+(seconds?.length?'KITTI timestamps':'assumed 10 Hz')+' · '+(calibration?'calibrated camera':'no camera calibration');};
 new ResizeObserver(()=>{const v=el('view');if(v.clientWidth&&v.clientHeight){renderer.setSize(v.clientWidth,v.clientHeight);camera.aspect=v.clientWidth/v.clientHeight;camera.updateProjectionMatrix()}}).observe(el('view'));
 new ResizeObserver(updateCameraProjection).observe(el('camera'));
 // Playback waits on the next scan, so a slow stream buffers instead of skipping
-function loop(now:number){requestAnimationFrame(loop);if(playing&&frames.length>1){const next=(index+1)%frames.length;const dt=next>index?frames[next].time-frames[index].time:frames.length>2?frames[frames.length-1].time-frames[frames.length-2].time:.1;const delay=Math.max(10,Math.min(2000,(dt>0?dt:.1)*1000/playbackSpeed));if(now-last>=delay&&(frames[next].points||cache.get(next))){last=now;index=next;cache.seek(next);if(renderedIndex!==next)draw()}}controls.update();renderer.render(scene,camera)}streamOnline();requestAnimationFrame(loop);
+let lastAccumulation=0;
+function cameraReady(i:number){return !(frames[i]?.imageFile||frames[i]?.imageUrl)||!!cameraCache.get(i)?.naturalWidth||cameraCache.hasFailed(i)}
+function loop(now:number){
+  requestAnimationFrame(loop);
+  let buffering=false;
+  if(playing&&frames.length>1){
+    const next=(index+1)%frames.length;
+    const dt=next>index?frames[next].time-frames[index].time:frames[1].time-frames[0].time;
+    const delay=Math.max(10,Math.min(2000,dt*1000/playbackSpeed));
+    if(now-last>=delay){
+      buffering=!(frames[next].points||cache.get(next))||!cameraReady(next)||renderedIndex!==index||!cameraReady(index);
+      if(!buffering){last=now;index=next;cache.seek(next);cameraCache.seek(next);draw()}
+    }
+  }
+  el('transport-status').textContent=buffering?'BUFFERING':playing?'PLAYING':frames.length?'PAUSED':el('mode').textContent==='SHOWCASE UNAVAILABLE'?'DATA ERROR':'CONNECTING';
+  if(accumulationDirty&&now-lastAccumulation>120&&renderedIndex===index){updateAccumulation();lastAccumulation=now}
+  controls.update();renderer.render(scene,camera);
+}
+if((globalThis as any).RANT_STREAM)streamOnline();else void loadShowcase();
+requestAnimationFrame(loop);
