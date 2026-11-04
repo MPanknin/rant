@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite --host 0.0.0.0",
     "build": "tsc --noEmit && vite build",
-    "test": "node --import tsx --test tests/*.test.mjs"
+    "test": "node --experimental-strip-types --test tests/*.test.mjs"
   },
   "dependencies": {
     "three": "^0.180.0"
@@ -14,7 +14,6 @@
   "devDependencies": {
     "vite": "^7.1.0",
     "typescript": "^5.9.0",
-    "@types/three": "^0.180.0",
-    "tsx": "^4.20.0"
+    "@types/three": "^0.180.0"
   }
 }
