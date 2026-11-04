@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import './style.css';
 import {shell} from './ui/shell';
+import {createWorkspaceUI,type ToolMode} from './ui/workspace';
 import {TrackWorkbench} from './rendering/track-workbench';
 import type {ObjectTrack} from './data/tracks';
 import {createCameraCache} from './data/camera-cache';
@@ -20,6 +21,7 @@ const AHEAD=20,BEHIND=19,PARALLEL=4;// 128 MiB decoded-frame budget plus a playh
 const app=document.querySelector<HTMLDivElement>('#app')!;
 app.innerHTML=shell();
 const el=(id:string)=>document.getElementById(id)!;
+const workspace=createWorkspaceUI();
 function createRenderer(){
   try{return new THREE.WebGLRenderer({antialias:true})}
   catch(error){el('transport-status').textContent='WEBGL UNAVAILABLE';el('mode').textContent='WebGL2 is required';el('view').textContent='This browser could not start WebGL2. Enable hardware acceleration or use a WebGL2-capable browser.';throw error}
@@ -75,7 +77,7 @@ el('reset-view').onclick=()=>{trackWorkbench.stopFollowing();camera.position.set
 const selectedPoint=new THREE.Mesh(new THREE.SphereGeometry(.24,12,10),new THREE.MeshBasicMaterial({color:0xffad38,depthTest:false}));selectedPoint.visible=false;selectedPoint.renderOrder=10;scene.add(selectedPoint);
 const measureMaterial=new THREE.LineBasicMaterial({color:0xffc46b,depthTest:false});
 const measurePointMaterial=new THREE.MeshBasicMaterial({color:0xffc46b,depthTest:false});
-let toolMode:'inspect'|'measure'='inspect';
+let toolMode:ToolMode='inspect';
 let colorMode:'height'|'intensity'|'range'='height';
 (el('color-mode') as HTMLSelectElement).onchange=e=>{colorMode=(e.target as HTMLSelectElement).value as typeof colorMode;renderedIndex=-1;draw()};
 let measurePoints:THREE.Vector3[]=[];
@@ -90,13 +92,21 @@ function updateMeasure(){
     el('measure-overlay').textContent='Distance '+delta.length().toFixed(3)+' m · ΔX '+delta.x.toFixed(2)+' · ΔY '+delta.y.toFixed(2)+' · ΔZ '+delta.z.toFixed(2);
   }else el('measure-overlay').textContent='Select second point to measure distance.';
 }
-el('inspect-mode').onclick=()=>{toolMode='inspect';el('inspect-mode').classList.add('selected');el('measure-mode').classList.remove('selected');el('measure-overlay').textContent=trackWorkbench.hasAnnotations?'Click an object box to inspect its track. Alt-click a LiDAR return.':'Click a LiDAR point to inspect XYZ and intensity.'};
-el('measure-mode').onclick=()=>{toolMode='measure';el('measure-mode').classList.add('selected');el('inspect-mode').classList.remove('selected');clearMeasure()};
+function clearPoint(){selectedPoint.visible=false;workspace.showPoint(false);(el('focus-selection') as HTMLButtonElement).disabled=true;el('camera-marker').hidden=true}
+function setTool(mode:ToolMode){
+  toolMode=mode;workspace.setTool(mode);clearMeasure();
+  if(mode!=='inspect'){setPlaying(false);trackWorkbench.selectTrack(undefined);clearPoint()}
+}
+el('inspect-mode').onclick=()=>setTool('inspect');
+el('measure-mode').onclick=()=>setTool('measure');
+el('annotate-mode').onclick=()=>setTool('annotate');
+el('close-annotations').onclick=()=>{setTool('inspect');el('annotate-mode').focus()};
+el('clear-point').onclick=()=>{clearPoint();el('inspect-mode').focus()};
 el('clear-measure').onclick=clearMeasure;
 
 let frames:Frame[]=[];
 let index=0,playing=false,last=0,nextId=1,playbackSpeed=1;let notes:Note[]=[];
-const trackWorkbench=new TrackWorkbench(scene,camera,controls,frame=>{setPlaying(false);seekFrame(frame)});
+const trackWorkbench=new TrackWorkbench(scene,camera,controls,frame=>{setPlaying(false);seekFrame(frame)},id=>{clearPoint();if(id)setTool('inspect')});
 const cache=new TimelineCache<Float32Array>({
   ahead:AHEAD,behind:BEHIND,concurrency:PARALLEL,maxResidentBytes:128*1024*1024,
   sizeOf:points=>points.byteLength,
@@ -162,11 +172,12 @@ el('focus-selection').onclick=()=>{
   camera.position.add(delta);controls.target.copy(selectedPoint.position);controls.update();
 };
 function selectProjectedPoint(pointIndex:number,points:Float32Array){
-  (document.querySelector('.inspector-details') as HTMLDetailsElement).open=true;
+  trackWorkbench.selectTrack(undefined);workspace.showPoint(true);
   const k=pointIndex*4;
   const p=new THREE.Vector3(points[k],points[k+1],points[k+2]);
   selectedPoint.position.copy(p);selectedPoint.visible=true;(el('focus-selection') as HTMLButtonElement).disabled=false;
-  const uv=projectKitti(p.x,p.y,p.z,frames[index].calibration!);
+  const calibration=frames[index].calibration;
+  const uv=calibration?projectKitti(p.x,p.y,p.z,calibration):undefined;
   const view=el('camera'),img=view.querySelector('img'),marker=el('camera-marker');
   marker.hidden=true;
   if(uv&&img?.naturalWidth&&img.naturalHeight&&uv[0]>=0&&uv[1]>=0&&uv[0]<img.naturalWidth&&uv[1]<img.naturalHeight){
@@ -177,6 +188,12 @@ function selectProjectedPoint(pointIndex:number,points:Float32Array){
   }
   el('inspection').textContent='Point #'+pointIndex+' · X '+p.x.toFixed(3)+' m · Y '+p.y.toFixed(3)+' m · Z '+p.z.toFixed(3)+' m · Intensity '+points[k+3].toFixed(4)+' · Range '+p.length().toFixed(2)+' m';
 }
+function usePoint(pointIndex:number,points:Float32Array){
+  const k=pointIndex*4,p=new THREE.Vector3(points[k],points[k+1],points[k+2]);
+  if(toolMode==='annotate')annotate(p);
+  else if(toolMode==='measure'){if(measurePoints.length===2)measurePoints=[];measurePoints.push(p);updateMeasure()}
+  else selectProjectedPoint(pointIndex,points);
+}
 el('camera').addEventListener('click',e=>{
   const f=frames[index],points=f&&(f.points??cache.get(index)),view=el('camera');
   const img=view.querySelector('img');
@@ -185,7 +202,7 @@ el('camera').addEventListener('click',e=>{
   const x=(e.clientX-rect.left-(view.clientWidth-img.naturalWidth*scale)/2)/scale;
   const y=(e.clientY-rect.top-(view.clientHeight-img.naturalHeight*scale)/2)/scale;
   if(x<0||y<0||x>=img.naturalWidth||y>=img.naturalHeight)return;
-  if(!e.altKey&&trackWorkbench.pickCamera(x,y))return;
+  if(toolMode==='inspect'&&!e.altKey&&trackWorkbench.pickCamera(x,y))return;
   let nearest=-1,best=8*8,nearestDepth=Infinity;
   for(let i=0;i<points.length;i+=4){
     const uv=projectKitti(points[i],points[i+1],points[i+2],f.calibration!);
@@ -193,7 +210,7 @@ el('camera').addEventListener('click',e=>{
     const d=(uv[0]-x)**2+(uv[1]-y)**2;
     if(d<best||(Math.abs(d-best)<.01&&Math.hypot(points[i],points[i+1],points[i+2])<nearestDepth)){best=d;nearest=i/4;nearestDepth=Math.hypot(points[i],points[i+1],points[i+2])}
   }
-  if(nearest>=0){selectProjectedPoint(nearest,points);el('measure-overlay').textContent='Camera selection → nearest projected LiDAR return';}
+  if(nearest>=0)usePoint(nearest,points);
   else el('measure-overlay').textContent='No projected LiDAR return within 8 image pixels';
 });
 
@@ -213,7 +230,7 @@ function showCamera(f:Frame){
   else {const empty=document.createElement('div');empty.className='empty';empty.textContent=paired?(cameraCache.hasFailed(index)?'CAMERA IMAGE FAILED TO LOAD':'BUFFERING CAMERA…'):'NO CAMERA FRAME';view.append(empty)}
   updateCameraProjection();
 }
-function draw(){if(!frames.length)return;trackWorkbench.update(index);if(measurementFrame!==index){clearMeasure();selectedPoint.visible=false;(el('focus-selection') as HTMLButtonElement).disabled=true;measurementFrame=index}const f=frames[index];el('frame').textContent='FRAME '+String(index).padStart(3,'0');el('time').textContent=f.time.toFixed(2)+' s';(el('timeline') as HTMLInputElement).value=String(index);showCamera(f);const points=f.points??cache.get(index);if(!points){renderedIndex=-1;geo.setDrawRange(0,0);markers.clear();el('count').textContent='LOADING';accumulatedCloud.visible=false;trajectory.visible=false;return}renderedIndex=index;const pts=points,n=pts.length/4;ensure(n);const pa=geo.attributes.position as THREE.BufferAttribute,ca=geo.attributes.color as THREE.BufferAttribute,pos=pa.array as Float32Array,col=ca.array as Float32Array;for(let i=0;i<n;i++){const j=i*4,k=i*3,z=pts[j+2],h=THREE.MathUtils.clamp((z+3)/8,0,1);pos[k]=pts[j];pos[k+1]=pts[j+1];pos[k+2]=z;if(colorMode==='intensity'){
+function draw(){if(!frames.length)return;trackWorkbench.update(index);if(measurementFrame!==index){clearMeasure();clearPoint();measurementFrame=index}const f=frames[index];el('frame').textContent='FRAME '+String(index).padStart(3,'0');el('time').textContent=f.time.toFixed(2)+' s';(el('timeline') as HTMLInputElement).value=String(index);showCamera(f);const points=f.points??cache.get(index);if(!points){renderedIndex=-1;geo.setDrawRange(0,0);markers.clear();el('count').textContent='LOADING';accumulatedCloud.visible=false;trajectory.visible=false;return}renderedIndex=index;const pts=points,n=pts.length/4;ensure(n);const pa=geo.attributes.position as THREE.BufferAttribute,ca=geo.attributes.color as THREE.BufferAttribute,pos=pa.array as Float32Array,col=ca.array as Float32Array;for(let i=0;i<n;i++){const j=i*4,k=i*3,z=pts[j+2],h=THREE.MathUtils.clamp((z+3)/8,0,1);pos[k]=pts[j];pos[k+1]=pts[j+1];pos[k+2]=z;if(colorMode==='intensity'){
     const v=THREE.MathUtils.clamp(pts[j+3],0,1);col[k]=v;col[k+1]=v;col[k+2]=v;
   }else if(colorMode==='range'){
     const v=THREE.MathUtils.clamp(Math.hypot(pts[j],pts[j+1],z)/90,0,1);
@@ -221,7 +238,7 @@ function draw(){if(!frames.length)return;trackWorkbench.update(index);if(measure
   }else{col[k]=.12+.65*h;col[k+1]=.7-.23*h;col[k+2]=.95-.25*h}}for(const a of [pa,ca]){a.clearUpdateRanges();a.addUpdateRange(0,n*3);a.needsUpdate=true}geo.setDrawRange(0,n);geo.boundingSphere=null;markers.clear();for(const note of notes.filter(x=>x.frame===index)){const m=new THREE.Mesh(markerGeo,markerMat);m.position.set(...note.position);markers.add(m)}el('count').textContent=n.toLocaleString();if(f.calibration)updateCameraProjection();updateAccumulation();updateTrajectory();const list=el('notes');list.replaceChildren();for(const note of notes){const row=document.createElement('div');row.className='annotation';row.textContent='#'+note.id+' · '+note.label+' · frame '+note.frame;list.append(row)}}
 // Binary PCD → interleaved x,y,z,intensity, the KITTI .bin layout used everywhere else
 function parsePCD(buf:ArrayBuffer){const text=new TextDecoder().decode(new Uint8Array(buf,0,Math.min(buf.byteLength,4096))),at=text.indexOf('\nDATA ');if(at<0)throw Error('Not a PCD file');const lines=text.slice(0,at).split('\n'),get=(k:string)=>lines.find(l=>l.startsWith(k+' '))?.trim().split(/\s+/).slice(1)??[];const eol=text.indexOf('\n',at+1),mode=text.slice(at+6,eol).trim();if(mode!=='binary')throw Error('Unsupported PCD data: '+mode);const fields=get('FIELDS'),size=get('SIZE').map(Number),type=get('TYPE'),count=get('COUNT').map(Number),n=Number(get('POINTS')[0]);let stride=0;const off:Record<string,number>={};fields.forEach((f,i)=>{off[f]=stride;stride+=size[i]*(count[i]||1)});const isF32=(f:string)=>{const i=fields.indexOf(f);return i>=0&&type[i]==='F'&&size[i]===4};if(!isF32('x')||!isF32('y')||!isF32('z'))throw Error('PCD needs float32 x, y, z');const hasI=isF32('intensity'),v=new DataView(buf,eol+1),out=new Float32Array(n*4);if(v.byteLength<n*stride)throw Error('PCD file is truncated');for(let p=0,b=0;p<n;p++,b+=stride){out[p*4]=v.getFloat32(b+off.x,true);out[p*4+1]=v.getFloat32(b+off.y,true);out[p*4+2]=v.getFloat32(b+off.z,true);out[p*4+3]=hasI?v.getFloat32(b+off.intensity,true):0}return out}
-function setFrames(next:Frame[],mode:string,tracks:ObjectTrack[]=[]){setPlaying(false);shownCameraFrame=undefined;frames=next;accumulatedCloud.visible=false;selectedPoint.visible=false;(el('focus-selection') as HTMLButtonElement).disabled=true;notes=[];index=0;renderedIndex=-1;measurementFrame=-1;trackWorkbench.setRecording(next,tracks);cameraCache.reset(0);cache.reset(next[0]?.url||next[0]?.file?next.length:0);cameraCache.reset(next.length);accumulationDirty=true;(el('timeline') as HTMLInputElement).max=String(frames.length-1);el('mode').textContent=mode;el('recording-capabilities').textContent=[next.some(f=>f.url||f.file)?'LIDAR':'',next.some(f=>f.imageFile||f.imageUrl)?'RGB CAMERA':'',next.some(f=>f.calibration)?'CALIBRATED':'',next.some(f=>f.pose)?'POSES':'',tracks.length?tracks.length+' TRACKS':''].filter(Boolean).join(' · ');
+function setFrames(next:Frame[],mode:string,tracks:ObjectTrack[]=[]){workspace.recordingLoaded();setTool('inspect');setPlaying(false);shownCameraFrame=undefined;frames=next;accumulatedCloud.visible=false;selectedPoint.visible=false;(el('focus-selection') as HTMLButtonElement).disabled=true;notes=[];index=0;renderedIndex=-1;measurementFrame=-1;trackWorkbench.setRecording(next,tracks);cameraCache.reset(0);cache.reset(next[0]?.url||next[0]?.file?next.length:0);cameraCache.reset(next.length);accumulationDirty=true;(el('timeline') as HTMLInputElement).max=String(frames.length-1);el('mode').textContent=mode;el('recording-capabilities').textContent=[next.some(f=>f.url||f.file)?'LIDAR':'',next.some(f=>f.imageFile||f.imageUrl)?'RGB CAMERA':'',next.some(f=>f.calibration)?'CALIBRATED':'',next.some(f=>f.pose)?'POSES':'',tracks.length?tracks.length+' TRACKS':''].filter(Boolean).join(' · ');
   const matched=next.filter(f=>f.imageFile||f.imageUrl).length;
   el('camera-sync').textContent=matched+' / '+next.length+' MATCHED';
   geo.setDrawRange(0,0);el('count').textContent='—';draw()}
@@ -238,7 +255,7 @@ el('next-frame').onclick=()=>{setPlaying(false);seekFrame(index+1)};
 (el('playback-speed') as HTMLSelectElement).onchange=e=>{playbackSpeed=Number((e.target as HTMLSelectElement).value);last=performance.now()};
 document.addEventListener('keydown',e=>{
   const target=e.target as HTMLElement;
-  if(target.closest('input,textarea,select,button')||e.altKey||e.ctrlKey||e.metaKey)return;
+  if(document.querySelector('dialog[open]')||target.closest('input,textarea,select,button,summary')||e.altKey||e.ctrlKey||e.metaKey)return;
   if(e.key==='ArrowLeft'){e.preventDefault();setPlaying(false);seekFrame(index-1)}
   else if(e.key==='ArrowRight'){e.preventDefault();setPlaying(false);seekFrame(index+1)}
   else if(e.code==='Space'){e.preventDefault();setPlaying(!playing)}
@@ -261,7 +278,7 @@ el('load-manifest').onclick=async()=>{
     const result=validateManifest(await response.json(),parsed.href);
     if(request!==recordingRequest)return;setPlaying(false);setFrames(result.frames,result.name,result.tracks);
     el('status').textContent=result.frames.length+' remote frames indexed · '+result.frames.filter(f=>f.imageUrl).length+' camera frames · '+result.frames.filter(f=>f.pose).length+' poses';
-  }catch(error){if(request===recordingRequest)el('status').textContent='Manifest error: '+String(error)}
+  }catch(error){if(request===recordingRequest){const message='Manifest error: '+String(error);el('status').textContent=message;workspace.recordingError(message)}}
   finally{button.disabled=false}
 };
 function loadPairedExample(){recordingRequest++;
@@ -307,24 +324,18 @@ renderer.domElement.addEventListener('click',e=>{
   ray.setFromCamera(mouse,camera);
   if(toolMode==='inspect'&&!e.altKey&&trackWorkbench.pick(ray))return;
   const hit=ray.intersectObject(cloud)[0];
+  if(toolMode==='annotate'){const p=new THREE.Vector3();if(hit?.index!==undefined){const points=frames[index].points??cache.get(index);if(points){const k=hit.index*4;annotate(p.set(points[k],points[k+1],points[k+2]))}}else if(ray.ray.intersectPlane(ground,p))annotate(p);return}
   if(hit?.index===undefined)return;
   const points=frames[index].points??cache.get(index);
   if(!points)return;
-  const k=hit.index*4,p=new THREE.Vector3(points[k],points[k+1],points[k+2]);
-  if(toolMode==='measure'){
-    if(measurePoints.length===2)measurePoints=[];
-    measurePoints.push(p);updateMeasure();
-  }else{
-    if(frames[index].calibration)selectProjectedPoint(hit.index,points);
-    else el('inspection').textContent='Point #'+hit.index+' · X '+p.x.toFixed(3)+' m · Y '+p.y.toFixed(3)+' m · Z '+p.z.toFixed(3)+' m · Intensity '+points[k+3].toFixed(4)+' · Range '+p.length().toFixed(2)+' m';
-  }
+  usePoint(hit.index,points);
 });
-renderer.domElement.addEventListener('dblclick',e=>{const r=renderer.domElement.getBoundingClientRect();const mouse=new THREE.Vector2((e.clientX-r.left)/r.width*2-1,1-(e.clientY-r.top)/r.height*2);ray.setFromCamera(mouse,camera);geo.computeBoundingSphere();const hit=ray.intersectObject(cloud)[0];if(hit?.index!==undefined){const p=geo.attributes.position.array,k=hit.index*3;annotate(new THREE.Vector3(p[k],p[k+1],p[k+2]));return}const p=new THREE.Vector3();if(ray.ray.intersectPlane(ground,p))annotate(p)});
+renderer.domElement.addEventListener('dblclick',e=>{if(toolMode==='annotate'||renderedIndex!==index||geo.drawRange.count===0)return;setTool('annotate');const r=renderer.domElement.getBoundingClientRect();const mouse=new THREE.Vector2((e.clientX-r.left)/r.width*2-1,1-(e.clientY-r.top)/r.height*2);ray.setFromCamera(mouse,camera);geo.computeBoundingSphere();const hit=ray.intersectObject(cloud)[0];if(hit?.index!==undefined){const p=geo.attributes.position.array,k=hit.index*3;annotate(new THREE.Vector3(p[k],p[k+1],p[k+2]));return}const p=new THREE.Vector3();if(ray.ray.intersectPlane(ground,p))annotate(p)});
 el('export').onclick=()=>{const blob=new Blob([JSON.stringify({schema:'rant/annotations/v1',notes},null,2)],{type:'application/json'});const url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download='rant-annotations.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)};
 el('play').onclick=()=>setPlaying(!playing);
 el('stream').onclick=streamOnline;
 (el('timeline') as HTMLInputElement).oninput=e=>{const next=Number((e.target as HTMLInputElement).value);if(next!==index)seekFrame(next)};
-(el('folder') as HTMLInputElement).onchange=async e=>{const request=++recordingRequest;const files=Array.from((e.target as HTMLInputElement).files||[]);const scans=files.filter(f=>/velodyne_points\/data\/[^/]+\.bin$/i.test(f.webkitRelativePath)).sort((a,b)=>a.name.localeCompare(b.name));const images=new Map(files.filter(f=>/image_02\/data\/[^/]+\.(png|jpe?g)$/i.test(f.webkitRelativePath)).map(f=>[f.name.replace(/\.[^.]+$/,''),f]));if(!scans.length){el('status').textContent='No KITTI .bin scans found';return}setPlaying(false);
+(el('folder') as HTMLInputElement).onchange=async e=>{const request=++recordingRequest;const files=Array.from((e.target as HTMLInputElement).files||[]);const scans=files.filter(f=>/velodyne_points\/data\/[^/]+\.bin$/i.test(f.webkitRelativePath)).sort((a,b)=>a.name.localeCompare(b.name));const images=new Map(files.filter(f=>/image_02\/data\/[^/]+\.(png|jpe?g)$/i.test(f.webkitRelativePath)).map(f=>[f.name.replace(/\.[^.]+$/,''),f]));if(!scans.length){el('status').textContent='No KITTI .bin scans found';workspace.recordingError('No KITTI .bin scans found');return}setPlaying(false);
   const stampFile=files.find(f=>/velodyne_points\/timestamps\.txt$/i.test(f.webkitRelativePath));
   const lidarTimes=stampFile?parseKittiTimestamps(await stampFile.text(),false):undefined;
   const absoluteLidar=lidarTimes?.length===scans.length?lidarTimes:undefined;
