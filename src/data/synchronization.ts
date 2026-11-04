@@ -1,4 +1,4 @@
-export function parseKittiTimestamps(text:string):number[]|undefined {
+export function parseKittiTimestamps(text:string,relative=true):number[]|undefined {
   const lines=text.trim().split(/\r?\n/).map(line=>line.trim()).filter(Boolean);
   if(!lines.length)return;
   const times=lines.map(line=>{
@@ -9,7 +9,7 @@ export function parseKittiTimestamps(text:string):number[]|undefined {
     return epoch+(Number('0.'+(match[3]??'0'))*1000);
   });
   if(times.some(t=>!Number.isFinite(t))||times.some((t,i)=>i>0&&t<times[i-1]))return;
-  return times.map(t=>(t-times[0])/1000);
+  return relative?times.map(t=>(t-times[0])/1000):times.map(t=>t/1000);
 }
 export function nearestTimestampIndex(timestamps:readonly number[],time:number,maxDelta=0.05):number|undefined {
   if(!timestamps.length||!Number.isFinite(time))return;
