@@ -87,7 +87,7 @@ export class TimelineCache<T> {
     // Evict farthest non-playhead entries first, preserving current frame.
     const distance=(j:number)=>Math.min((j-this.cursor+this.count)%this.count,(this.cursor-j+this.count)%this.count);
     const victims=[...this.values.keys()].filter(j=>j!==this.cursor).sort((a,b)=>distance(b)-distance(a));
-    while(this.residentBytes+size>this.budget&&victims.length)this.remove(victims.shift()!);
+    if(i===this.cursor)while(this.residentBytes+size>this.budget&&victims.length)this.remove(victims.shift()!);
     if(this.residentBytes+size>this.budget){this.failures.add(i);return;}
     this.values.set(i,value);this.residentBytes+=size;
   }
