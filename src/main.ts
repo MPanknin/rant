@@ -191,6 +191,7 @@ function setFrames(next:Frame[],mode:string){if(lastImageFrame?.image){URL.revok
 function setPlaying(p:boolean){playing=p;last=performance.now();el('play').textContent=p?'Ⅱ':'▶'}
 function seekFrame(next:number){
   if(!frames.length)return;
+  last=performance.now();
   index=Math.max(0,Math.min(frames.length-1,next));
   cache.seek(index);
   draw();
@@ -267,4 +268,4 @@ el('stream').onclick=streamOnline;
 new ResizeObserver(()=>{const v=el('view');if(v.clientWidth&&v.clientHeight){renderer.setSize(v.clientWidth,v.clientHeight);camera.aspect=v.clientWidth/v.clientHeight;camera.updateProjectionMatrix()}}).observe(el('view'));
 new ResizeObserver(updateCameraProjection).observe(el('camera'));
 // Playback waits on the next scan, so a slow stream buffers instead of skipping
-function loop(now:number){requestAnimationFrame(loop);if(playing&&frames.length&&now-last>=100/playbackSpeed){const next=(index+1)%frames.length;if(frames[next].points||cache.get(next)){last=now;index=next;cache.seek(next);if(renderedIndex!==next)draw()}}controls.update();renderer.render(scene,camera)}streamOnline();requestAnimationFrame(loop);
+function loop(now:number){requestAnimationFrame(loop);if(playing&&frames.length>1){const next=(index+1)%frames.length;const dt=next>index?frames[next].time-frames[index].time:frames.length>2?frames[frames.length-1].time-frames[frames.length-2].time:.1;const delay=Math.max(10,Math.min(2000,(dt>0?dt:.1)*1000/playbackSpeed));if(now-last>=delay&&(frames[next].points||cache.get(next))){last=now;index=next;cache.seek(next);if(renderedIndex!==next)draw()}}controls.update();renderer.render(scene,camera)}streamOnline();requestAnimationFrame(loop);
