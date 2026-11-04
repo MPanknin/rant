@@ -15,11 +15,11 @@ On start the console streams 154 consecutive HDL-64 scans (binary PCD, 10 Hz) fr
 
 ## Real data
 
-Download a short **synced + rectified KITTI Raw** sequence from https://www.cvlibs.net/datasets/kitti/raw_data.php. Select an extracted parent folder containing `*_sync/velodyne_points/data/*.bin` and optionally `*_sync/image_02/data/*.png`. Up to 120 frames are read in the browser. If the online sample cannot be reached, a synthetic scene is shown.
+Download a short **synced + rectified KITTI Raw** sequence from https://www.cvlibs.net/datasets/kitti/raw_data.php. Select an extracted parent folder containing `*_sync/velodyne_points/data/*.bin` and optionally `*_sync/image_02/data/*.png`. Frames are indexed from the selected folder without eagerly reading all LiDAR bytes. The same bounded playhead cache is used for local files and online data; camera images are opened lazily when displayed. If the online sample cannot be reached, a synthetic scene is shown.
 
 ## Streaming validation
 
-To validate the seek-priority change, open browser network throttling, start the online sample, and drag the timeline from the beginning to a distant frame. The requested frame should be fetched before prefetching its neighbors, and old-window requests should be canceled. Check the status line for cache and in-flight counts. This is a manual validation procedure; it has not been verified in an automated browser run.
+To validate the seek-priority change, open browser network throttling, start the online sample, and drag the timeline from the beginning to a distant frame. Repeat with a large local KITTI folder and verify that importing it does not eagerly load every scan. The requested frame should be fetched before prefetching its neighbors, and old-window requests should be canceled. Check the status line for cache and in-flight counts. This is a manual validation procedure; it has not been verified in an automated browser run.
 
 ## Known limitations
 
@@ -27,7 +27,7 @@ To validate the seek-priority change, open browser network throttling, start the
 - No ego-motion compensation or ROS/MCAP support. The online sample has no camera frames.
 - Annotations are frame-local points exported to JSON, not tracked cuboids.
 - Synthetic mode is illustrative, not real KITTI data.
-- Real KITTI import is not yet verified; the importer is tested with synthetic KITTI-format scans.
+- Real KITTI import and lazy loading are not yet verified in a browser. Local File.arrayBuffer reads cannot be canceled mid-read; stale results are discarded.
 
 ## Next
 
