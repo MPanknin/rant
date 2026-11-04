@@ -49,6 +49,11 @@ try{
   await page.locator('#stream').click();
   await page.waitForFunction(()=>document.querySelector('#count')?.textContent==='2',null,{timeout:10000});
   await page.locator('#play').click(); // stop newly started playback
+  assert.equal(await page.locator('#playback-speed').inputValue(),'1');
+  await page.locator('#playback-speed').selectOption('0.5');
+  assert.equal(await page.locator('#playback-speed').inputValue(),'0.5');
+  assert.equal(await page.locator('#prev-frame').count(),1);
+  assert.equal(await page.locator('#next-frame').count(),1);
   await page.locator('#fusion').click();
   await page.waitForFunction(()=>document.querySelector('#count')?.textContent==='2',null,{timeout:10000});
   await page.waitForFunction(()=>document.querySelector('#camera img')?.complete===true,null,{timeout:10000});
