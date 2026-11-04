@@ -87,7 +87,7 @@ function updateCameraProjection(){
   canvas.width=view.clientWidth*devicePixelRatio;canvas.height=view.clientHeight*devicePixelRatio;
   canvas.style.width=view.clientWidth+'px';canvas.style.height=view.clientHeight+'px';
   if(!enabled||!f?.calibration||!points||!img?.naturalWidth||!img.naturalHeight){
-    el('projection-status').textContent=f?.calibration?'Waiting for paired sensors':'Calibration required';
+    el('projection-status').textContent=!enabled?'Projection hidden':f?.calibration?'Waiting for paired sensors':'Calibration required';
     return;
   }
   const scale=Math.min(view.clientWidth/img.naturalWidth,view.clientHeight/img.naturalHeight);
@@ -129,12 +129,12 @@ el('camera').addEventListener('click',e=>{
   const x=(e.clientX-rect.left-(view.clientWidth-img.naturalWidth*scale)/2)/scale;
   const y=(e.clientY-rect.top-(view.clientHeight-img.naturalHeight*scale)/2)/scale;
   if(x<0||y<0||x>=img.naturalWidth||y>=img.naturalHeight)return;
-  let nearest=-1,best=8*8;
+  let nearest=-1,best=8*8,nearestDepth=Infinity;
   for(let i=0;i<points.length;i+=4){
     const uv=projectKitti(points[i],points[i+1],points[i+2],f.calibration!);
     if(!uv)continue;
     const d=(uv[0]-x)**2+(uv[1]-y)**2;
-    if(d<best){best=d;nearest=i/4}
+    if(d<best||(Math.abs(d-best)<.01&&Math.hypot(points[i],points[i+1],points[i+2])<nearestDepth)){best=d;nearest=i/4;nearestDepth=Math.hypot(points[i],points[i+1],points[i+2])}
   }
   if(nearest>=0){selectProjectedPoint(nearest,points);el('measure-overlay').textContent='Camera selection → nearest projected LiDAR return';}
   else el('measure-overlay').textContent='No projected LiDAR return within 8 image pixels';
