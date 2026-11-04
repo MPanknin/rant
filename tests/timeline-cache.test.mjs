@@ -25,7 +25,7 @@ test('prioritizes playhead and bounds resident bytes',async()=>{
 
 test('stale completion cannot repopulate reset cache',async()=>{
   let finish;
-  const cache=new TimelineCache<Uint8Array>({
+  const cache=new TimelineCache({
     ahead:0,behind:0,concurrency:1,sizeOf:v=>v.byteLength,
     load:()=>new Promise(resolve=>{finish=resolve})
   });
@@ -39,7 +39,7 @@ test('stale completion cannot repopulate reset cache',async()=>{
 
 test('oversized frames do not cause unbounded retry',async()=>{
   let attempts=0;
-  const cache=new TimelineCache<Uint8Array>({
+  const cache=new TimelineCache({
     ahead:0,behind:0,maxResidentBytes:4,sizeOf:v=>v.byteLength,
     load:async()=>{attempts++;return {value:new Uint8Array(8),bytes:8}}
   });
