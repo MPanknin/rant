@@ -24,6 +24,7 @@ await page.route('https://raw.githubusercontent.com/azureology/kitti-velo2cam/ma
   else if(route.request().url().endsWith('.png'))await route.fulfill({status:200,body:png,contentType:'image/png'});
   else await route.abort();
 });
+await page.route('https://mock.rant.test/recording.json',route=>route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({name:'TEST MULTIMODAL',frames:[{time:0,lidar:'https://mock.rant.test/000000.pcd',camera:'https://raw.githubusercontent.com/azureology/kitti-velo2cam/master/data_object_image_2/testing/image_2/000007.png',pose:[1,0,0,0,0,1,0,0,0,0,1,0]},{time:.1,lidar:'https://mock.rant.test/000001.pcd',camera:'https://raw.githubusercontent.com/azureology/kitti-velo2cam/master/data_object_image_2/testing/image_2/000007.png',pose:[1,0,0,.2,0,1,0,0,0,0,1,0]}]})}));
 try{
   await page.goto('http://127.0.0.1:4173/',{waitUntil:'domcontentloaded'});
   await page.locator('#play').click(); // stop auto-play to make seeks deterministic
@@ -66,6 +67,13 @@ try{
   assert.equal(await page.locator('#focus-selection').isDisabled(),true);
   await page.locator('#camera').click({position:{x:177,y:120}});
   assert.ok((await page.locator('#measure-overlay').textContent()).includes('projected LiDAR')|| (await page.locator('#measure-overlay').textContent()).includes('No projected LiDAR'));
+  await page.locator('#manifest-url').fill('https://mock.rant.test/recording.json');
+  await page.locator('#load-manifest').click();
+  await page.waitForFunction(()=>document.querySelector('#mode')?.textContent==='TEST MULTIMODAL'&&document.querySelector('#count')?.textContent==='2',null,{timeout:10000});
+  await page.locator('#accumulate').check();
+  assert.match(await page.locator('#accumulation-status').textContent(),/scans accumulated/);
+  await page.locator('#next-frame').click();
+  await page.waitForFunction(()=>document.querySelector('#frame')?.textContent==='FRAME 001'&&document.querySelector('#count')?.textContent==='2',null,{timeout:10000});
   assert.ok(requests>0,'expected mocked frame requests');
   assert.deepEqual(errors,[],'browser console exceptions');
   console.log('Browser smoke passed: load, seek, restart, rendering');
