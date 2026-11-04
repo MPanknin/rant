@@ -87,7 +87,7 @@ function updateCameraProjection(){
   canvas.width=view.clientWidth*devicePixelRatio;canvas.height=view.clientHeight*devicePixelRatio;
   canvas.style.width=view.clientWidth+'px';canvas.style.height=view.clientHeight+'px';
   if(!enabled||!f?.calibration||!points||!img?.naturalWidth||!img.naturalHeight){
-    el('projection-status').textContent=f?.calibrated?'Waiting for paired sensors':'Calibration required';
+    el('projection-status').textContent=f?.calibration?'Waiting for paired sensors':'Calibration required';
     return;
   }
   const scale=Math.min(view.clientWidth/img.naturalWidth,view.clientHeight/img.naturalHeight);
@@ -124,14 +124,14 @@ function selectProjectedPoint(pointIndex:number,points:Float32Array){
 el('camera').addEventListener('click',e=>{
   const f=frames[index],points=f&&(f.points??cache.get(index)),view=el('camera');
   const img=view.querySelector('img');
-  if(!f?.calibrated||!points||!img?.naturalWidth||!img.naturalHeight)return;
+  if(!f?.calibration||!points||!img?.naturalWidth||!img.naturalHeight)return;
   const rect=view.getBoundingClientRect(),scale=Math.min(view.clientWidth/img.naturalWidth,view.clientHeight/img.naturalHeight);
   const x=(e.clientX-rect.left-(view.clientWidth-img.naturalWidth*scale)/2)/scale;
   const y=(e.clientY-rect.top-(view.clientHeight-img.naturalHeight*scale)/2)/scale;
   if(x<0||y<0||x>=img.naturalWidth||y>=img.naturalHeight)return;
   let nearest=-1,best=8*8;
   for(let i=0;i<points.length;i+=4){
-    const uv=projectKitti(points[i],points[i+1],points[i+2]);
+    const uv=projectKitti(points[i],points[i+1],points[i+2],f.calibration!);
     if(!uv)continue;
     const d=(uv[0]-x)**2+(uv[1]-y)**2;
     if(d<best){best=d;nearest=i/4}
