@@ -27,7 +27,9 @@ export class TimelineCache<T> {
   private readonly behind:number;
   private readonly concurrency:number;
   private readonly budget:number;
-  constructor(private readonly options:StreamOptions<T>) {
+  private readonly options:StreamOptions<T>;
+  constructor(options:StreamOptions<T>) {
+    this.options=options;
     this.ahead=options.ahead??20;
     this.behind=options.behind??4;
     this.concurrency=options.concurrency??4;
