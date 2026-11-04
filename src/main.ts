@@ -276,7 +276,7 @@ async function loadShowcase(){
   try{
     setPlaying(false);el('status').textContent='Loading real KITTI drive…';
     const url=new URL('demo/manifest.json',document.baseURI).href;
-    const response=await fetch(url);if(!response.ok)throw Error('Dataset HTTP '+response.status);
+    const response=await fetch(url,{cache:'no-cache'});if(!response.ok)throw Error('Dataset HTTP '+response.status);
     const result=validateManifest(await response.json(),url);if(request!==recordingRequest)return;
     setFrames(result.frames,result.name,result.tracks);setPlaying(true);
   }catch(error){if(request===recordingRequest){el('mode').textContent='SHOWCASE UNAVAILABLE';el('status').textContent=String(error)+' · Use recordings to retry or import data.';el('transport-status').textContent='DATA ERROR'}}
