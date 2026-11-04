@@ -1,5 +1,8 @@
 import { chromium } from 'playwright';
 import assert from 'node:assert/strict';
+import {mkdtemp,mkdir,writeFile,rm} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
 
 const browser=await chromium.launch({headless:true,args:['--enable-webgl','--use-gl=angle','--use-angle=swiftshader','--enable-unsafe-swiftshader']});
 const page=await browser.newPage();
@@ -26,7 +29,7 @@ await page.route('https://raw.githubusercontent.com/azureology/kitti-velo2cam/ma
 });
 await page.route('https://mock.rant.test/recording.json',route=>route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({name:'TEST MULTIMODAL',frames:[{time:0,lidar:'https://mock.rant.test/000000.pcd',camera:'https://raw.githubusercontent.com/azureology/kitti-velo2cam/master/data_object_image_2/testing/image_2/000007.png',pose:[1,0,0,0,0,1,0,0,0,0,1,0]},{time:.1,lidar:'https://mock.rant.test/000001.pcd',camera:'https://raw.githubusercontent.com/azureology/kitti-velo2cam/master/data_object_image_2/testing/image_2/000007.png',pose:[1,0,0,.2,0,1,0,0,0,0,1,0]}]})}));
 try{
-  await page.goto('http://127.0.0.1:4173/',{waitUntil:'domcontentloaded'});
+  await page.goto(process.env.RANT_TEST_URL??'http://127.0.0.1:4173/',{waitUntil:'domcontentloaded'});
   await page.locator('#play').click(); // stop auto-play to make seeks deterministic
   await page.waitForFunction(()=>document.querySelector('#count')?.textContent==='2',null,{timeout:15000});
   for(const index of [7,2,6,0,5,1]){
@@ -47,6 +50,7 @@ try{
   const startFrame=await page.locator('#frame').textContent();
   await page.waitForFunction(start=>document.querySelector('#frame')?.textContent!==start,startFrame,{timeout:10000});
   await page.locator('#play').click();
+  await page.locator('summary').filter({hasText:'RECORDINGS & IMPORT'}).click();
   await page.locator('#stream').click();
   await page.waitForFunction(()=>document.querySelector('#count')?.textContent==='2',null,{timeout:10000});
   await page.locator('#play').click(); // stop newly started playback
@@ -74,6 +78,29 @@ try{
   assert.match(await page.locator('#accumulation-status').textContent(),/scans accumulated/);
   await page.locator('#next-frame').click();
   await page.waitForFunction(()=>document.querySelector('#frame')?.textContent==='FRAME 001'&&document.querySelector('#count')?.textContent==='2',null,{timeout:10000});
+  // Exercise real File API folder indexing, missing camera matches, and separately supplied calibration.
+  const local=await mkdtemp(join(tmpdir(),'rant-kitti-'));
+  try{
+    for(const dir of ['velodyne_points/data','image_02/data'])await mkdir(join(local,dir),{recursive:true});
+    for(let i=0;i<3;i++)await writeFile(join(local,'velodyne_points/data/'+String(i).padStart(10,'0')+'.bin'),velo);
+    for(const i of [0,2])await writeFile(join(local,'image_02/data/'+String(i).padStart(10,'0')+'.png'),png);
+    await writeFile(join(local,'velodyne_points/timestamps.txt'),'2011-09-26 12:00:00.000000000\n2011-09-26 12:00:00.100000000\n2011-09-26 12:00:00.200000000\n');
+    await writeFile(join(local,'image_02/timestamps.txt'),'2011-09-26 12:00:00.010000000\n2011-09-26 12:00:00.210000000\n');
+    await page.locator('#folder').setInputFiles(local);
+    await page.waitForFunction(()=>document.querySelector('#mode')?.textContent==='KITTI RAW'&&document.querySelector('#count')?.textContent==='2');
+    assert.equal(await page.locator('#timeline').getAttribute('max'),'2');
+    await page.locator('#calibration-files').setInputFiles([
+      {name:'calib_cam_to_cam.txt',mimeType:'text/plain',buffer:Buffer.from('P_rect_02: 100 0 50 0 0 100 40 0 0 0 1 0\nR_rect_00: 1 0 0 0 1 0 0 0 1')},
+      {name:'calib_velo_to_cam.txt',mimeType:'text/plain',buffer:Buffer.from('R: 0 -1 0 0 0 -1 1 0 0\nT: 0 0 0')}
+    ]);
+    await page.waitForFunction(()=>document.querySelector('#import-status')?.textContent==='Calibration applied to 3 frames');
+    await page.locator('#next-frame').click();
+    await page.waitForFunction(()=>document.querySelector('#frame')?.textContent==='FRAME 001'&&document.querySelector('#camera-sync')?.textContent==='NO CAMERA');
+    assert.equal(await page.locator('#camera img').count(),0,'missing image must not show the previous frame');
+    await page.locator('#next-frame').click();
+    await page.waitForFunction(()=>document.querySelector('#camera img')?.alt==='Camera frame 0000000002');
+    assert.match(await page.locator('#accumulation-status').textContent(),/No vehicle poses/);
+  }finally{await rm(local,{recursive:true,force:true})}
   assert.ok(requests>0,'expected mocked frame requests');
   assert.deepEqual(errors,[],'browser console exceptions');
   console.log('Browser smoke passed: load, seek, restart, rendering');

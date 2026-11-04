@@ -1,79 +1,99 @@
-# Rant — Robot Sensor Console
+# Rant — Multimodal Robotics Sensor Workbench
 
-Private interview prototype for inspecting KITTI Raw LiDAR and camera sequences. Three.js; streams an online sample or reads local files via the File API; no upload or backend.
+Experimental browser console for streaming synchronized LiDAR, RGB camera and sensor poses. TypeScript, Three.js/WebGL and Vite. All exploration runs in the browser; local files are never uploaded.
 
-## Run
+**Live preview:** https://mpanknin.github.io/rant/  
+**Development branch:** `feat/streaming-workbench` (not merged into `main`).
+
+## Default experience
+
+The app opens **KITTI Raw 2011_09_26_drive_0005_sync**, a real residential drive in Karlsruhe:
+
+- 154 consecutive synchronized frames, 15.80 seconds at approximately 10 Hz.
+- Velodyne HDL-64E LiDAR, rectified left RGB camera (`image_02`), original sensor timestamps and calibration.
+- Genuine OXTS GPS/IMU poses, converted from world-from-IMU into world-from-Velodyne using `calib_imu_to_velo.txt`; approximately 62 m of displacement.
+- About 87 MiB of prepared sensor files. Every fourth LiDAR return is retained, and PNG camera images are converted to JPEG quality 85 without resizing. XYZ units, intensity, calibration and frame ordering are preserved.
+
+Playback waits for the next scan **and decoded camera frame**. Scrubbing never reuses an image from another timestamp. Missing images are explicitly marked. The camera overlay projects current LiDAR returns using `P_rect_02 × R_rect_00 × T_camera_from_velodyne`; click either view to inspect a corresponding point.
+
+Enable **ACCUMULATE 20 SCANS** to compare one observation with a denser environment. The current sensor stays at the origin; history and the measured trajectory transform into its coordinate system. Space plays/pauses, left/right arrows step frames, and F focuses a selection. Mouse drag orbits, right drag pans, scroll zooms; double-click adds a frame-local annotation.
+
+Other recordings, the original 154-frame Udacity LiDAR stream, the original single-frame fusion sample, remote manifests and local KITTI import remain available under **Recordings & import**.
+
+## Data attribution and reproducibility
+
+Source: [KITTI Raw](https://www.cvlibs.net/datasets/kitti/raw_data.php), by Andreas Geiger, Philip Lenz, Christoph Stiller and Raquel Urtasun, *Vision meets Robotics: The KITTI Dataset*, IJRR 2013. Dataset and derived preview files: [CC BY-NC-SA 3.0](https://creativecommons.org/licenses/by-nc-sa/3.0/), for this noncommercial research demonstration. These terms apply to the data, separately from application code.
+
+`scripts/prepare-demo.py` fetches the publicly accessible official synced/rectified and calibration archives, verifies pinned SHA-256 hashes, and builds `public/demo/`. It writes a recording manifest, per-file checksums and attribution. Generated binaries are ignored by Git and included only in the Pages artifact. GitHub Actions caches the prepared dataset using the conversion script's hash. A first uncached build downloads approximately 616 MiB; visitors only request the current streaming window from the Pages host, with no cross-origin dependency for the default showcase.
 
 ```bash
-npm install
+npm ci
+python -m pip install numpy==2.2.6 Pillow==11.3.0
+python scripts/prepare-demo.py
 npm run dev
 ```
 
-## Online sample
+The first conversion requires Internet access; later local runs reuse `.cache/kitti`. Without prepared data, the UI reports that the showcase is unavailable and offers the other recording sources. It never silently substitutes synthetic data.
 
-On start the console streams 154 consecutive HDL-64 scans (binary PCD, 10 Hz) from [udacity/SFND_Lidar_Obstacle_Detection](https://github.com/udacity/SFND_Lidar_Obstacle_Detection) (`src/sensors/data/pcd/data_2`, pinned commit) via `raw.githubusercontent.com`, which allows cross-origin fetches. Scans are fetched four at a time, about 2 s ahead of the playhead, and dropped once they fall out of the window, so memory stays at roughly 25 scans. Seeking prioritizes the requested frame, cancels requests outside the new window, and displays cache/request counts. Playback waits for the next scan instead of skipping. The scans appear to be KITTI Raw data, so KITTI's CC BY-NC-SA 3.0 terms apply. A host page can point the stream elsewhere by defining `window.RANT_STREAM = { base, count, source }` before the app script.
+## Streaming and reconstruction
 
-## Real data
+`src/data/timeline-cache.ts` owns playhead priority, bounded residency, concurrent reads, cancellation and generation isolation. LiDAR uses a 128 MiB decoded budget, 20 frames ahead, 19 behind, and four concurrent reads. Retaining 19 previous scans makes 20-frame accumulation possible. Far seeks request the target first and load the surrounding window; the whole recording is not loaded eagerly.
 
-Download a short **synced + rectified KITTI Raw** sequence from https://www.cvlibs.net/datasets/kitti/raw_data.php. Select an extracted parent folder containing `*_sync/velodyne_points/data/*.bin` and optionally `*_sync/image_02/data/*.png`. Frames are indexed from the selected folder without eagerly reading all LiDAR bytes. The same bounded playhead cache is used for local files and online data; camera images are opened lazily when displayed. If the online sample cannot be reached, a synthetic scene is shown.
+`src/data/camera-cache.ts` separately bounds decoded camera memory to 24 MiB, with six frames ahead, one behind and two reads. Object URLs are revoked on eviction/reset, and stale completions release their payloads. Budgets exclude browser HTTP cache, in-flight buffers, and renderer allocations; they are not a claim about total process or GPU memory.
 
-## Remote multimodal recording manifests
+`src/geometry/poses.ts` applies `inverse(worldFromCurrentVelodyne) × worldFromSourceVelodyne`. Reconstruction reuses cached scans and one fixed 240k-point Float32 staging/GPU buffer, sampling each scan to at most 12k returns. It updates on frame changes or newly resident history, not on every animation frame. Missing history or poses is reported, and the status shows how many scans contributed. History never wraps across the end of a recording.
 
-Paste an HTTP(S) URL into **STREAM MULTIMODAL MANIFEST** to load a synchronized camera/LiDAR recording. The manifest and sensor URLs must be accessible from the browser with CORS enabled. Relative sensor URLs resolve against the manifest's URL. LiDAR files must be raw KITTI-style `.bin` (interleaved float32 XYZ/intensity) or binary PCD; camera images can be PNG/JPEG. The loader validates timestamps, calibration and poses before indexing frames, and uses the same bounded scan cache as local recordings.
+Coordinate systems remain distinct:
 
-Example `manifest.json` (replace the paths with real synchronized files):
+- Velodyne: X forward, Y left, Z up.
+- Projection: Velodyne → unrectified reference camera → rectified camera → image.
+- OXTS conversion: `worldFromIMU × inverse(velodyneFromIMU)`, normalized to the first Velodyne pose.
+- KITTI Odometry camera poses are **not** directly usable as Velodyne poses.
+
+## Remote recording manifest
+
+Load an HTTP(S) manifest under **Recordings & import**. Relative paths resolve against its URL; remote sources must allow browser CORS requests. No data is written to a server.
 
 ```json
 {
-  "name": "MY MULTIMODAL RECORDING",
-  "calibration": {
-    "p": [721.5377, 0, 609.5593, 44.85728, 0, 721.5377, 172.854, 0.2163791, 0, 0, 1, 0.002745884],
-    "r": [0.9999239, 0.00983776, -0.007445048, -0.009869795, 0.9999421, -0.004278459, 0.007402527, 0.004351614, 0.9999631],
-    "t": [0.007533745, -0.9999714, -0.000616602, -0.004069766, 0.01480249, 0.0007280733, -0.9998902, -0.07631618, 0.9998621, 0.00752379, 0.01480755, -0.2717806]
-  },
+  "name": "My recording",
   "frames": [
-    {"time": 0, "lidar": "./velodyne/000000.bin", "camera": "./image_02/000000.png", "pose": [1,0,0,0,0,1,0,0,0,0,1,0]},
-    {"time": 0.1, "lidar": "./velodyne/000001.bin", "camera": "./image_02/000001.png", "pose": [1,0,0,0.1,0,1,0,0,0,0,1,0]}
+    {"time": 0, "cameraTime": 0.01, "lidar": "000000.bin", "camera": "000000.jpg", "pose": [1,0,0,0,0,1,0,0,0,0,1,0]},
+    {"time": 0.1, "cameraTime": 0.11, "lidar": "000001.bin", "camera": "000001.jpg", "pose": [1,0,0,0.1,0,1,0,0,0,0,1,0]}
   ]
 }
 ```
 
-**Temporal reconstruction:** Enable **ACCUMULATE SCANS (WORLD SPACE)** for recordings with poses. Each pose must be a 12-element row-major **world-from-Velodyne** rigid transform, not a camera pose. The last 20 available scans are transformed into the current sensor frame; each scan is sampled to at most approximately 12k points. Scans not resident in the cache are omitted. This is a bounded, exploratory reconstruction, not a full SLAM or registration pipeline.
+This is a schema illustration, not a real dataset. A manifest has 2–20,000 frames with finite, strictly increasing `time` values in seconds. `camera`, `cameraTime` and `pose` are optional per frame; missing cameras are shown explicitly. `lidar` accepts raw interleaved float32 XYZ/intensity `.bin` or binary PCD. Query strings are supported. An optional top-level `calibration` object supplies `p` (12), `r` (9), and `t` (12) finite numbers, respectively row-major projection, rectification and camera-from-Velodyne matrices. Poses are rigid row-major 3×4 **world-from-Velodyne** transforms; scale, reflection and nonfinite matrices are rejected.
 
-Local KITTI folder imports also accept an optional `poses.txt` or `world_from_velodyne.txt` with one row-major 3×4 world-from-Velodyne matrix per LiDAR frame. KITTI odometry poses are typically world-from-camera and **must be converted** before use.
+## Local KITTI import
 
-**Demo limitation:** The built-in paired KITTI sample still contains only one frame. The manifest adapter is functional, but no verified public continuous paired recording has been bundled yet. The online default remains a LiDAR-only sequence.
+Select a KITTI Raw folder containing `velodyne_points/data/*.bin`, optionally `image_02/data/*` and sensor timestamp files. Files are indexed lazily; camera matches use the nearest timestamp within 50 ms, or filenames when timestamps are unavailable. Without complete LiDAR timestamps, the importer assumes 10 Hz.
 
-## Streaming validation
+Calibration can reside in the selected parent folder or be added afterward with **Add calibration files**. Select both `calib_cam_to_cam.txt` and `calib_velo_to_cam.txt` for KITTI Raw, or one KITTI Object calibration file with `P2`, `R0_rect`, `Tr_velo_to_cam`. Apply calibration only to the recording it belongs to.
 
-To validate the seek-priority change, open browser network throttling, start the online sample, and drag the timeline from the beginning to a distant frame. Repeat with a large local KITTI folder and verify that importing it does not eagerly load every scan. The requested frame should be fetched before prefetching its neighbors, and old-window requests should be canceled. Check the status line for cache and in-flight counts. This is a manual validation procedure; it has not been verified in an automated browser run.
+Optional `world_from_velodyne.txt` (or legacy `poses.txt`) must already contain one rigid world-from-Velodyne matrix per scan. Ordinary KITTI Odometry `poses.txt` contains camera poses and must be converted first. OXTS conversion is implemented by the built-in preparation script, not yet by the local folder importer.
 
-## Streaming architecture
+## Validation
 
-The reusable `src/data/timeline-cache.ts` module owns frame priorities, a bounded resident window, concurrent reads, cancellation, failed-frame tracking and seek statistics. It is generic in the decoded frame payload and does not import Three.js, browser UI components or KITTI parsing. `src/main.ts` supplies a loader that reads either a local `File` or an online PCD response and decodes it to interleaved XYZ/intensity samples. This allows later camera, radar, or other temporal adapters to reuse the scheduling logic.
+```bash
+npm test                       # deterministic TypeScript module/cache tests
+python tests/test_demo.py       # actual KITTI poses, timestamps, files and static-scene alignment
+npm run build
+npm install --no-save --package-lock=false playwright@1.56.1
+npx playwright install chromium
+node tests/run-browser.mjs      # starts and stops its own test server
+```
 
-The streaming cache uses a **128 MiB decoded-frame budget** as well as a playhead-centered window. Prefetch is deferred when the budget is full; the playhead can evict other cached frames. A single frame larger than the budget is rejected. This does not include renderer buffers, image decoding, or in-flight response allocations. The initial sample is not an MCAP/ROS reader.
+Browser tests include the original mocked workflow regression suite and a separate **unmocked real-data** integration test: initial lazy loading, projection, distinct consecutive images, synchronized playback, stepping, far seeks, 20-scan reconstruction, missing frames, local import and responsive layout. `RANT_TEST_URL` on the individual browser scripts can target a deployed build. CI uploads desktop/mobile screenshots. Unit fixtures test exact translation/rotation composition, projection and calibration layouts, invalid manifests, memory limits and stale request disposal.
 
-Run scheduler regression tests with Node 22+ using `npm test`; the tests cover bounded retention, stale completion after reset, and oversized frames. The full browser build still requires `npm run build` and a manual rendering check.
+The real-data alignment test compares stationary scenery from frames 20 and 30; with this sampled data its median nearest-return error drops from roughly 1.76 m to 0.22 m after applying the measured poses. This is a sanity check, not a general reconstruction accuracy guarantee.
 
-## Streaming diagnostics
+## Remaining limits
 
-The dataset status panel reports resident scan count, active reads, cumulative bytes read (including bytes from local files), timeline seek cache hits/misses, and elapsed time from the most recent manual seek until its frame is displayed. The counters reset when the dataset changes. These are application-level counters, **not** GPU memory usage or network transfer measurements; the online byte counter counts fetched response bodies, not HTTP overhead. Failed frames are not retried indefinitely; restart the stream or reimport to retry. Aborted requests do not count as failures.
-
-## Known limitations
-
-- Timestamps assumed 100ms apart; filename-matched camera and LiDAR frames, without calibration/projection.
-- No ego-motion compensation or ROS/MCAP support. The online sample has no camera frames.
-- Annotations are frame-local points exported to JSON, not tracked cuboids.
-- Synthetic mode is illustrative, not real KITTI data.
-- Real KITTI import and lazy loading are not yet verified in a browser. Local File.arrayBuffer reads cannot be canceled mid-read; stale results are discarded.
-
-## Next
-
-Parse real timestamps and calibration, support coordinate frame transforms, decode in a worker, cuboids/tracks, and MCAP adapter.
-
-## Browser smoke validation
-
-Feature-branch CI launches headless Chromium against the Vite development server, intercepts the online PCD requests with a deterministic two-point binary fixture, and checks initial rendering, repeated timeline seeking and stream restart. The smoke test does not validate camera calibration, actual KITTI file import, GPU memory consumption, or long-duration playback; those remain manual/integration checks.
-
-Local KITTI folder imports use `velodyne_points/timestamps.txt` when it has a timestamp for every scan; otherwise the viewer assumes 10 Hz. Camera images are matched to scan files by basename.
+- Sensor-following reconstruction only; no world-fixed navigation mode, full-map SLAM, loop closure or scan deskew.
+- Moving objects can leave trails in accumulated scans. OXTS noise and LiDAR sampling limit alignment precision.
+- The default drive is 15.8 seconds and spatially subsampled; this is a compact demonstration, not a benchmark distribution.
+- WebGL2 is required. Software-rendered Chromium checks do not establish GPU performance on every device.
+- Local KITTI import does not infer or convert arbitrary camera/IMU pose conventions. Annotations remain frame-local points, not tracked objects.
+- No radar, ROS/MCAP or multi-camera playback yet.

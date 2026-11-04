@@ -17,6 +17,24 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm test
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Cache prepared KITTI showcase
+        id: demo
+        uses: actions/cache@v4
+        with:
+          path: public/demo
+          key: kitti-drive-0005-${{ hashFiles('scripts/prepare-demo.py') }}
+      - name: Prepare real multimodal showcase
+        if: steps.demo.outputs.cache-hit != 'true'
+        run: |
+          pip install numpy==2.2.6 Pillow==11.3.0
+          python scripts/prepare-demo.py
+      - name: Verify real recording and coordinate alignment
+        run: |
+          pip install numpy==2.2.6 Pillow==11.3.0
+          python tests/test_demo.py
       - run: npm run build
       - name: Install browser smoke dependencies
         run: |
@@ -27,3 +45,11 @@ jobs:
           npm run dev -- --host 127.0.0.1 --port 4173 > /tmp/rant-vite.log 2>&1 &
           for i in $(seq 1 30); do if curl -fsS http://127.0.0.1:4173/ > /dev/null; then break; fi; sleep 1; done
           node tests/browser-smoke.mjs
+          node tests/browser-real.mjs
+      - name: Save browser verification screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rant-browser-verification
+          path: /tmp/rant-real-*.png
+          if-no-files-found: ignore

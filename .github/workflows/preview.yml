@@ -25,6 +25,20 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm test
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Cache prepared KITTI showcase
+        id: demo
+        uses: actions/cache@v4
+        with:
+          path: public/demo
+          key: kitti-drive-0005-${{ hashFiles('scripts/prepare-demo.py') }}
+      - name: Prepare real multimodal showcase
+        if: steps.demo.outputs.cache-hit != 'true'
+        run: |
+          pip install numpy==2.2.6 Pillow==11.3.0
+          python scripts/prepare-demo.py
       - run: npm run build -- --base=/rant/
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
