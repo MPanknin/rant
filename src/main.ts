@@ -4,14 +4,14 @@ import './style.css';
 import { TimelineCache } from './data/timeline-cache';
 import { parseKittiTimestamps, nearestTimestampIndex } from './data/synchronization';
 
-type Frame={time:number;points?:Float32Array;url?:string;file?:File;image?:string;imageFile?:File;imageUrl?:string;calibrated?:boolean;name:string};
+type Frame={time:number;points?:Float32Array;url?:string;file?:File;image?:string;imageFile?:File;imageUrl?:string;calibration?:KittiCalibration;name:string};
 type Note={id:number;frame:number;label:string;position:[number,number,number]};
 // Online sample: consecutive HDL-64 street scans (binary PCD, KITTI-derived) from Udacity's SFND course repo, served by GitHub with CORS.
 // A host page can point the stream elsewhere by defining window.RANT_STREAM before this script runs.
 const STREAM:{base:string;count:number;source:string}=(globalThis as any).RANT_STREAM??{base:'https://raw.githubusercontent.com/udacity/SFND_Lidar_Obstacle_Detection/ef15da2bc172359e7d6edfdd156a2a243d10977e/src/sensors/data/pcd/data_2/',count:154,source:'udacity/SFND_Lidar_Obstacle_Detection on GitHub'};
 const AHEAD=20,BEHIND=4,PARALLEL=4;// 128 MiB decoded-frame budget plus a playhead-centered prefetch window
 const app=document.querySelector<HTMLDivElement>('#app')!;
-app.innerHTML=`<header><b>◉ RANT <span>/ ROBOT SENSOR CONSOLE</span></b><a href="https://www.cvlibs.net/datasets/kitti/raw_data.php" target="_blank" rel="noopener">KITTI RAW DATA ↗</a></header><main><section id="viewport"><div id="view"></div><div class="float pane">SPATIAL VIEW · <span id="count">—</span> POINTS</div><div class="hint">Drag orbit · Scroll zoom · Right drag pan · Click inspect / measure · Double click annotate</div><div class="tools"><button id="inspect-mode" class="selected">INSPECT</button><button id="measure-mode">MEASURE</button><button id="clear-measure">CLEAR</button><select id="color-mode" aria-label="Point color mode"><option value="height">HEIGHT</option><option value="intensity">INTENSITY</option><option value="range">RANGE</option></select></div><div id="measure-overlay" class="measure-overlay">Click a point to inspect its XYZ and intensity.</div></section><aside><div class="pane">CAMERA / IMAGE_02 <span id="camera-sync">NO CAMERA SOURCE</span></div><div id="camera" class="camera"><canvas id="camera-projection" class="camera-projection"></canvas><div id="camera-marker" class="camera-marker" hidden></div><div class="empty">NO CAMERA FRAME<br/>Import KITTI images to inspect</div></div><div class="panel camera-options"><label><input id="project-cloud" type="checkbox" checked /> PROJECT LIDAR ON CAMERA</label><span id="projection-status">Calibration required</span></div><div class="pane">DATASET / <span id="mode">SYNTHETIC</span></div><div class="panel"><p>Streams ${STREAM.count} consecutive HDL-64 scans from ${STREAM.source}, buffering about 2 s ahead. Or select a local KITTI Raw sync folder containing velodyne_points/data and optionally image_02/data.</p><div class="actions"><button id="stream" class="upload">STREAM LIDAR SEQUENCE</button><button id="fusion" class="upload">LOAD CAMERA + LIDAR EXAMPLE</button><label class="upload">IMPORT KITTI FOLDER<input id="folder" type="file" webkitdirectory multiple /></label></div><p id="status"></p></div><div class="pane">POINT INSPECTOR</div><div class="panel" id="inspection">Select a point in the 3D view.</div><div class="pane">ANNOTATIONS</div><div class="panel"><input id="label" type="text" value="object" placeholder="Label"/><button id="add">ADD AT ORIGIN</button> <button id="export">EXPORT JSON</button><div id="notes"></div></div><div class="pane">COORDINATES</div><div class="panel"><p>KITTI Velodyne: X forward, Y left, Z up. Camera projection and ego-motion compensation are not implemented.</p></div></aside></main><footer><button id="play">▶</button><span id="frame">FRAME 000</span><input id="timeline" type="range" min="0" max="23" value="0"/><span id="time">0.0 s</span><span id="sensor-indicator">LIDAR ONLY</span></footer>`;
+app.innerHTML=`<header><b>◉ RANT <span>/ ROBOT SENSOR CONSOLE</span></b><a href="https://www.cvlibs.net/datasets/kitti/raw_data.php" target="_blank" rel="noopener">KITTI RAW DATA ↗</a></header><main><section id="viewport"><div id="view"></div><div class="float pane">SPATIAL VIEW · <span id="count">—</span> POINTS</div><div class="hint">Drag orbit · Scroll zoom · Right drag pan · Click inspect / measure · Double click annotate</div><div class="tools"><button id="inspect-mode" class="selected">INSPECT</button><button id="measure-mode">MEASURE</button><button id="clear-measure">CLEAR</button><select id="color-mode" aria-label="Point color mode"><option value="height">HEIGHT</option><option value="intensity">INTENSITY</option><option value="range">RANGE</option></select></div><div id="measure-overlay" class="measure-overlay">Click a point to inspect its XYZ and intensity.</div></section><aside><div class="pane">CAMERA / IMAGE_02 <span id="camera-sync">NO CAMERA SOURCE</span></div><div id="camera" class="camera"><canvas id="camera-projection" class="camera-projection"></canvas><div id="camera-marker" class="camera-marker" hidden></div><div class="empty">NO CAMERA FRAME<br/>Import KITTI images to inspect</div></div><div class="panel camera-options"><label><input id="project-cloud" type="checkbox" checked /> PROJECT LIDAR ON CAMERA</label><span id="projection-status">Calibration required</span></div><div class="pane">DATASET / <span id="mode">SYNTHETIC</span></div><div class="panel"><p>Streams ${STREAM.count} consecutive HDL-64 scans from ${STREAM.source}, buffering about 2 s ahead. Or select a local KITTI Raw sync folder containing velodyne_points/data and optionally image_02/data.</p><div class="actions"><button id="stream" class="upload">STREAM LIDAR SEQUENCE</button><button id="fusion" class="upload">LOAD CAMERA + LIDAR EXAMPLE</button><label class="upload">IMPORT KITTI FOLDER<input id="folder" type="file" webkitdirectory multiple /></label></div><p id="status"></p></div><div class="pane">POINT INSPECTOR</div><div class="panel" id="inspection">Select a point in the 3D view.</div><div class="pane">ANNOTATIONS</div><div class="panel"><input id="label" type="text" value="object" placeholder="Label"/><button id="add">ADD AT ORIGIN</button> <button id="export">EXPORT JSON</button><div id="notes"></div></div><div class="pane">COORDINATES</div><div class="panel"><p>KITTI Velodyne: X forward, Y left, Z up. Camera projection uses KITTI calibration when available; ego-motion compensation is not implemented.</p></div></aside></main><footer><button id="play">▶</button><span id="frame">FRAME 000</span><input id="timeline" type="range" min="0" max="23" value="0"/><span id="time">0.0 s</span><span id="sensor-indicator">LIDAR ONLY</span></footer>`;
 const el=(id:string)=>document.getElementById(id)!;
 const renderer=new THREE.WebGLRenderer({antialias:true});renderer.setPixelRatio(Math.min(devicePixelRatio,2));renderer.setClearColor(0x0a111c);el('view').appendChild(renderer.domElement);
 const scene=new THREE.Scene();scene.fog=new THREE.FogExp2(0x0a111c,.007);
@@ -65,13 +65,15 @@ const cache=new TimelineCache<Float32Array>({
 });
 let renderedIndex=-1;let lastImageFrame:Frame|undefined;let measurementFrame=-1;let shownCameraFrame:Frame|undefined;
 function updateBufferStatus(){const stats=cache.stats;const source=frames[0]?.file?'local KITTI folder':frames[0]?.imageUrl?'public KITTI paired sample':STREAM.source;el('status').textContent=`${stats.resident} / ${frames.length} cached · ${(stats.residentBytes/1048576).toFixed(1)} / 128 MiB resident · ${stats.active} active · ${(stats.bytesRead/1048576).toFixed(1)} MiB read · hits ${stats.hits} / misses ${stats.misses} · last seek ${stats.lastSeekMs.toFixed(0)} ms · ${stats.failures} failed · ${source}`;}
+type KittiCalibration={p:number[];r:number[];t:number[]};
 const KITTI_P2=[721.5377,0,609.5593,44.85728,0,721.5377,172.854,0.2163791,0,0,1,0.002745884];
 const KITTI_R=[.9999239,.00983776,-.007445048,-.009869795,.9999421,-.004278459,.007402527,.004351614,.9999631];
 const KITTI_T=[.007533745,-.9999714,-.000616602,-.004069766,.01480249,.0007280733,-.9998902,-.07631618,.9998621,.00752379,.01480755,-.2717806];
-function projectKitti(x:number,y:number,z:number):[number,number]|undefined{
-  const a=KITTI_T,c=[a[0]*x+a[1]*y+a[2]*z+a[3],a[4]*x+a[5]*y+a[6]*z+a[7],a[8]*x+a[9]*y+a[10]*z+a[11]];
-  const r=KITTI_R,q=[r[0]*c[0]+r[1]*c[1]+r[2]*c[2],r[3]*c[0]+r[4]*c[1]+r[5]*c[2],r[6]*c[0]+r[7]*c[1]+r[8]*c[2]];
-  const p=KITTI_P2,den=p[8]*q[0]+p[9]*q[1]+p[10]*q[2]+p[11];
+const SAMPLE_CALIBRATION:KittiCalibration={p:KITTI_P2,r:KITTI_R,t:KITTI_T};
+function projectKitti(x:number,y:number,z:number,calibration:KittiCalibration):[number,number]|undefined{
+  const a=calibration.t,c=[a[0]*x+a[1]*y+a[2]*z+a[3],a[4]*x+a[5]*y+a[6]*z+a[7],a[8]*x+a[9]*y+a[10]*z+a[11]];
+  const r=calibration.r,q=[r[0]*c[0]+r[1]*c[1]+r[2]*c[2],r[3]*c[0]+r[4]*c[1]+r[5]*c[2],r[6]*c[0]+r[7]*c[1]+r[8]*c[2]];
+  const p=calibration.p,den=p[8]*q[0]+p[9]*q[1]+p[10]*q[2]+p[11];
   if(den<=0)return;
   return [(p[0]*q[0]+p[1]*q[1]+p[2]*q[2]+p[3])/den,(p[4]*q[0]+p[5]*q[1]+p[6]*q[2]+p[7])/den];
 }
@@ -84,7 +86,7 @@ function updateCameraProjection(){
   const enabled=(el('project-cloud') as HTMLInputElement).checked;
   canvas.width=view.clientWidth*devicePixelRatio;canvas.height=view.clientHeight*devicePixelRatio;
   canvas.style.width=view.clientWidth+'px';canvas.style.height=view.clientHeight+'px';
-  if(!enabled||!f?.calibrated||!points||!img?.naturalWidth||!img.naturalHeight){
+  if(!enabled||!f?.calibration||!points||!img?.naturalWidth||!img.naturalHeight){
     el('projection-status').textContent=f?.calibrated?'Waiting for paired sensors':'Calibration required';
     return;
   }
@@ -93,7 +95,7 @@ function updateCameraProjection(){
   ctx.scale(devicePixelRatio,devicePixelRatio);
   let visible=0;
   for(let i=0;i<points.length;i+=4){
-    const uv=projectKitti(points[i],points[i+1],points[i+2]);
+    const uv=projectKitti(points[i],points[i+1],points[i+2],f.calibration!);
     if(!uv||uv[0]<0||uv[1]<0||uv[0]>=img.naturalWidth||uv[1]>=img.naturalHeight)continue;
     const distance=Math.hypot(points[i],points[i+1],points[i+2]);
     const hue=Math.max(0,220-Math.min(distance/75,1)*220);
@@ -108,7 +110,7 @@ function selectProjectedPoint(pointIndex:number,points:Float32Array){
   const k=pointIndex*4;
   const p=new THREE.Vector3(points[k],points[k+1],points[k+2]);
   selectedPoint.position.copy(p);selectedPoint.visible=true;
-  const uv=projectKitti(p.x,p.y,p.z);
+  const uv=projectKitti(p.x,p.y,p.z,frames[index].calibration!);
   const view=el('camera'),img=view.querySelector('img'),marker=el('camera-marker');
   marker.hidden=true;
   if(uv&&img?.naturalWidth&&img.naturalHeight&&uv[0]>=0&&uv[1]>=0&&uv[0]<img.naturalWidth&&uv[1]<img.naturalHeight){
@@ -156,9 +158,32 @@ function draw(){if(!frames.length)return;if(measurementFrame!==index){clearMeasu
   }else if(colorMode==='range'){
     const v=THREE.MathUtils.clamp(Math.hypot(pts[j],pts[j+1],z)/90,0,1);
     col[k]=v;col[k+1]=.8*(1-v);col[k+2]=1-v;
-  }else{col[k]=.12+.65*h;col[k+1]=.7-.23*h;col[k+2]=.95-.25*h}}for(const a of [pa,ca]){a.clearUpdateRanges();a.addUpdateRange(0,n*3);a.needsUpdate=true}geo.setDrawRange(0,n);markers.clear();for(const note of notes.filter(x=>x.frame===index)){const m=new THREE.Mesh(markerGeo,markerMat);m.position.set(...note.position);markers.add(m)}el('count').textContent=n.toLocaleString();if(f.calibrated)updateCameraProjection();const list=el('notes');list.replaceChildren();for(const note of notes){const row=document.createElement('div');row.className='annotation';row.textContent='#'+note.id+' · '+note.label+' · frame '+note.frame;list.append(row)}}
+  }else{col[k]=.12+.65*h;col[k+1]=.7-.23*h;col[k+2]=.95-.25*h}}for(const a of [pa,ca]){a.clearUpdateRanges();a.addUpdateRange(0,n*3);a.needsUpdate=true}geo.setDrawRange(0,n);markers.clear();for(const note of notes.filter(x=>x.frame===index)){const m=new THREE.Mesh(markerGeo,markerMat);m.position.set(...note.position);markers.add(m)}el('count').textContent=n.toLocaleString();if(f.calibration)updateCameraProjection();const list=el('notes');list.replaceChildren();for(const note of notes){const row=document.createElement('div');row.className='annotation';row.textContent='#'+note.id+' · '+note.label+' · frame '+note.frame;list.append(row)}}
 // Binary PCD → interleaved x,y,z,intensity, the KITTI .bin layout used everywhere else
 function parsePCD(buf:ArrayBuffer){const text=new TextDecoder().decode(new Uint8Array(buf,0,Math.min(buf.byteLength,4096))),at=text.indexOf('\nDATA ');if(at<0)throw Error('Not a PCD file');const lines=text.slice(0,at).split('\n'),get=(k:string)=>lines.find(l=>l.startsWith(k+' '))?.trim().split(/\s+/).slice(1)??[];const eol=text.indexOf('\n',at+1),mode=text.slice(at+6,eol).trim();if(mode!=='binary')throw Error('Unsupported PCD data: '+mode);const fields=get('FIELDS'),size=get('SIZE').map(Number),type=get('TYPE'),count=get('COUNT').map(Number),n=Number(get('POINTS')[0]);let stride=0;const off:Record<string,number>={};fields.forEach((f,i)=>{off[f]=stride;stride+=size[i]*(count[i]||1)});const isF32=(f:string)=>{const i=fields.indexOf(f);return i>=0&&type[i]==='F'&&size[i]===4};if(!isF32('x')||!isF32('y')||!isF32('z'))throw Error('PCD needs float32 x, y, z');const hasI=isF32('intensity'),v=new DataView(buf,eol+1),out=new Float32Array(n*4);if(v.byteLength<n*stride)throw Error('PCD file is truncated');for(let p=0,b=0;p<n;p++,b+=stride){out[p*4]=v.getFloat32(b+off.x,true);out[p*4+1]=v.getFloat32(b+off.y,true);out[p*4+2]=v.getFloat32(b+off.z,true);out[p*4+3]=hasI?v.getFloat32(b+off.intensity,true):0}return out}
+function calibrationEntries(text:string):Map<string,number[]>{
+  const entries=new Map<string,number[]>();
+  for(const line of text.split(/\r?\n/)){
+    const match=/^\s*([\w]+):\s*(.*)$/.exec(line);
+    if(!match)continue;
+    const numbers=match[2].trim().split(/\s+/).map(Number);
+    if(numbers.length&&numbers.every(Number.isFinite))entries.set(match[1],numbers);
+  }
+  return entries;
+}
+function readRawCalibration(cameraText:string,velodyneText:string):KittiCalibration{
+  const cam=calibrationEntries(cameraText),velo=calibrationEntries(velodyneText);
+  const p=cam.get('P_rect_02'),r=cam.get('R_rect_00'),rotation=velo.get('R'),translation=velo.get('T');
+  if(p?.length!==12||r?.length!==9||rotation?.length!==9||translation?.length!==3)throw Error('KITTI Raw calibration missing P_rect_02, R_rect_00, R or T');
+  const t=[rotation[0],rotation[1],rotation[2],translation[0],rotation[3],rotation[4],rotation[5],translation[1],rotation[6],rotation[7],rotation[8],translation[2]];
+  return {p,r,t};
+}
+function readObjectCalibration(text:string):KittiCalibration{
+  const entries=calibrationEntries(text);
+  const p=entries.get('P2'),r=entries.get('R0_rect'),t=entries.get('Tr_velo_to_cam');
+  if(p?.length!==12||r?.length!==9||t?.length!==12)throw Error('KITTI Object calibration missing P2, R0_rect or Tr_velo_to_cam');
+  return {p,r,t};
+}
 function setFrames(next:Frame[],mode:string){if(lastImageFrame?.image){URL.revokeObjectURL(lastImageFrame.image);lastImageFrame.image=undefined}lastImageFrame=undefined;shownCameraFrame=undefined;frames=next;selectedPoint.visible=false;notes=[];index=0;renderedIndex=-1;measurementFrame=-1;cache.reset(next[0]?.url||next[0]?.file?next.length:0);(el('timeline') as HTMLInputElement).max=String(frames.length-1);el('mode').textContent=mode;
   const matched=next.filter(f=>f.imageFile||f.imageUrl).length;
   el('camera-sync').textContent=matched+' / '+next.length+' MATCHED';
@@ -168,7 +193,7 @@ function streamOnline(){el('status').textContent='Connecting to '+STREAM.source;
 function loadPairedExample(){
   setPlaying(false);
   const base='https://raw.githubusercontent.com/azureology/kitti-velo2cam/master/';
-  setFrames([{time:0,name:'000007',url:base+'data_object_velodyne/testing/velodyne/000007.bin',imageUrl:base+'data_object_image_2/testing/image_2/000007.png',calibrated:true}],'KITTI CAMERA + LIDAR');
+  setFrames([{time:0,name:'000007',url:base+'data_object_velodyne/testing/velodyne/000007.bin',imageUrl:base+'data_object_image_2/testing/image_2/000007.png',calibration:SAMPLE_CALIBRATION}],'KITTI CAMERA + LIDAR');
   el('status').textContent='Loading paired KITTI example from azureology/kitti-velo2cam';
 }
 el('fusion').onclick=loadPairedExample;
@@ -190,7 +215,7 @@ renderer.domElement.addEventListener('click',e=>{
     if(measurePoints.length===2)measurePoints=[];
     measurePoints.push(p);updateMeasure();
   }else{
-    if(frames[index].calibrated)selectProjectedPoint(hit.index,points);
+    if(frames[index].calibration)selectProjectedPoint(hit.index,points);
     else el('inspection').textContent='Point #'+hit.index+' · X '+p.x.toFixed(3)+' m · Y '+p.y.toFixed(3)+' m · Z '+p.z.toFixed(3)+' m · Intensity '+points[k+3].toFixed(4)+' · Range '+p.length().toFixed(2)+' m';
   }
 });
@@ -209,12 +234,20 @@ el('stream').onclick=streamOnline;
   const cameraTimes=cameraStampFile?parseKittiTimestamps(await cameraStampFile.text(),false):undefined;
   const absoluteCamera=cameraTimes?.length===cameraFiles.length?cameraTimes:undefined;
   const cameraByName=new Map(cameraFiles.map(f=>[f.name.replace(/\.[^.]+$/,''),f]));
+  let calibration:KittiCalibration|undefined;
+  const cameraCalib=files.find(f=>/(?:^|\/)calib_cam_to_cam\.txt$/i.test(f.webkitRelativePath));
+  const veloCalib=files.find(f=>/(?:^|\/)calib_velo_to_cam\.txt$/i.test(f.webkitRelativePath));
+  const objectCalib=files.find(f=>/(?:^|\/)calib\/[^/]+\.txt$/i.test(f.webkitRelativePath));
+  try{
+    if(cameraCalib&&veloCalib)calibration=readRawCalibration(await cameraCalib.text(),await veloCalib.text());
+    else if(objectCalib)calibration=readObjectCalibration(await objectCalib.text());
+  }catch(error){el('status').textContent='Calibration could not be parsed: '+String(error)}
   const next:Frame[]=scans.map((file,i)=>{
     const name=file.name.replace(/\.bin$/i,'');
     const cameraIndex=absoluteLidar&&absoluteCamera?nearestTimestampIndex(absoluteCamera,absoluteLidar[i],0.05):undefined;
-    return {time:seconds?.[i]??i*.1,file,imageFile:cameraIndex===undefined?(!absoluteLidar||!absoluteCamera?cameraByName.get(name):undefined):cameraFiles[cameraIndex],name};
+    return {time:seconds?.[i]??i*.1,file,imageFile:cameraIndex===undefined?(!absoluteLidar||!absoluteCamera?cameraByName.get(name):undefined):cameraFiles[cameraIndex],calibration,name};
   });
-  setFrames(next,'KITTI RAW');el('status').textContent=frames.length+' scans indexed lazily · '+(seconds?.length?'KITTI timestamps':'assumed 10 Hz');};
+  setFrames(next,'KITTI RAW');el('status').textContent=frames.length+' scans indexed lazily · '+(seconds?.length?'KITTI timestamps':'assumed 10 Hz')+' · '+(calibration?'calibrated camera':'no camera calibration');};
 new ResizeObserver(()=>{const v=el('view');if(v.clientWidth&&v.clientHeight){renderer.setSize(v.clientWidth,v.clientHeight);camera.aspect=v.clientWidth/v.clientHeight;camera.updateProjectionMatrix()}}).observe(el('view'));
 new ResizeObserver(updateCameraProjection).observe(el('camera'));
 // Playback waits on the next scan, so a slow stream buffers instead of skipping
