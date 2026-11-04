@@ -13,6 +13,7 @@ export class TimelineCache<T> {
   private values=new Map<number,T>();
   private active=new Map<number,AbortController>();
   private failures=new Set<number>();
+  private deferred=new Set<number>();
   private generation=0;
   private cursor=0;
   private count=0;
@@ -37,7 +38,7 @@ export class TimelineCache<T> {
     if(!Number.isInteger(count)||count<0)throw Error('Invalid frame count');
     this.generation++;
     for(const request of this.active.values())request.abort();
-    this.active.clear();this.values.clear();this.failures.clear();
+    this.active.clear();this.values.clear();this.failures.clear();this.deferred.clear();
     this.count=count;this.cursor=0;this.bytes=0;this.residentBytes=0;
     this.hits=0;this.misses=0;this.seekStart=0;this.seekMs=0;
     this.notify();this.pump();
@@ -50,7 +51,7 @@ export class TimelineCache<T> {
   seek(index:number):void {
     if(!Number.isInteger(index)||index<0||index>=this.count||index===this.cursor)return;
     this.cursor=index;
-    this.failures.clear();
+    this.deferred.clear();
     if(this.values.has(index)){this.hits++;this.seekMs=0;this.seekStart=0}
     else {this.misses++;this.seekStart=performance.now()}
     this.evictOutsideWindow();
@@ -88,7 +89,7 @@ export class TimelineCache<T> {
     const distance=(j:number)=>Math.min((j-this.cursor+this.count)%this.count,(this.cursor-j+this.count)%this.count);
     const victims=[...this.values.keys()].filter(j=>j!==this.cursor).sort((a,b)=>distance(b)-distance(a));
     if(i===this.cursor)while(this.residentBytes+size>this.budget&&victims.length)this.remove(victims.shift()!);
-    if(this.residentBytes+size>this.budget){this.failures.add(i);return;}
+    if(this.residentBytes+size>this.budget){this.deferred.add(i);return;}
     this.values.set(i,value);this.residentBytes+=size;
   }
   private notify():void {this.options.onChange?.()}
@@ -96,7 +97,7 @@ export class TimelineCache<T> {
     if(!this.count)return;
     for(const i of this.priorities()){
       if(this.active.size>=this.concurrency)break;
-      if(this.values.has(i)||this.active.has(i)||this.failures.has(i))continue;
+      if(this.values.has(i)||this.active.has(i)||this.failures.has(i)||this.deferred.has(i))continue;
       // Avoid prefetching when the budget is already occupied by the playhead.
       if(i!==this.cursor&&this.residentBytes>=this.budget)continue;
       const controller=new AbortController(),generation=this.generation;
