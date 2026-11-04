@@ -35,12 +35,16 @@ function updateAccumulation(){
   const frame=frames[index];
   if(!enabled||!frame?.pose){accumulatedCloud.visible=false;el('accumulation-status').textContent=enabled?'No vehicle poses available for this recording':'Requires recording poses. Current frame only.';return}
   const samples:number[]=[];let used=0;
+  const current=frame.pose;
+  const currentWorld=new THREE.Matrix4().set(current[0],current[1],current[2],current[3],current[4],current[5],current[6],current[7],current[8],current[9],current[10],current[11],0,0,0,1);
+  const worldToCurrent=currentWorld.invert();
   const from=Math.max(0,index-19);
   for(let i=from;i<=index;i++){
     const points=frames[i].points??cache.get(i),pose=frames[i].pose;
     if(!points||!pose)continue;
     used++;
     const transform=new THREE.Matrix4().set(pose[0],pose[1],pose[2],pose[3],pose[4],pose[5],pose[6],pose[7],pose[8],pose[9],pose[10],pose[11],0,0,0,1);
+    transform.premultiply(worldToCurrent);
     const point=new THREE.Vector3();
     const stride=Math.max(1,Math.ceil(points.length/4/12000));
     for(let j=0;j<points.length;j+=4*stride){
@@ -50,7 +54,7 @@ function updateAccumulation(){
   }
   accumulatedGeometry.setAttribute('position',new THREE.Float32BufferAttribute(samples,3));
   accumulatedCloud.visible=used>0;
-  el('accumulation-status').textContent=used+' / '+(index-from+1)+' scans accumulated · '+(samples.length/3).toLocaleString()+' points · poses in world-from-Velodyne coordinates';
+  el('accumulation-status').textContent=used+' / '+(index-from+1)+' scans accumulated · '+(samples.length/3).toLocaleString()+' points · aligned to current Velodyne frame';
   accumulatedVersion++;
 }
 (el('accumulate') as HTMLInputElement).onchange=()=>{updateAccumulation();draw()};
@@ -335,10 +339,17 @@ el('stream').onclick=streamOnline;
     if(cameraCalib&&veloCalib)calibration=readRawCalibration(await cameraCalib.text(),await veloCalib.text());
     else if(objectCalib)calibration=readObjectCalibration(await objectCalib.text());
   }catch(error){el('status').textContent='Calibration could not be parsed: '+String(error)}
+  const poseFile=files.find(f=>/(?:^|\/)(?:poses|world_from_velodyne)\.txt$/i.test(f.webkitRelativePath));
+  let poses:number[][]|undefined;
+  if(poseFile){
+    const parsed=(await poseFile.text()).trim().split(/\r?\n/).map(line=>line.trim().split(/\s+/).map(Number));
+    if(parsed.length===scans.length&&parsed.every(p=>p.length===12&&p.every(Number.isFinite)))poses=parsed;
+    else el('status').textContent='Pose file ignored: expected one 3×4 world-from-Velodyne matrix per scan';
+  }
   const next:Frame[]=scans.map((file,i)=>{
     const name=file.name.replace(/\.bin$/i,'');
     const cameraIndex=absoluteLidar&&absoluteCamera?nearestTimestampIndex(absoluteCamera,absoluteLidar[i],0.05):undefined;
-    return {time:seconds?.[i]??i*.1,file,imageFile:cameraIndex===undefined?(!absoluteLidar||!absoluteCamera?cameraByName.get(name):undefined):cameraFiles[cameraIndex],calibration,name};
+    return {time:seconds?.[i]??i*.1,file,imageFile:cameraIndex===undefined?(!absoluteLidar||!absoluteCamera?cameraByName.get(name):undefined):cameraFiles[cameraIndex],calibration,pose:poses?.[i],name};
   });
   setFrames(next,'KITTI RAW');el('status').textContent=frames.length+' scans indexed lazily · '+(seconds?.length?'KITTI timestamps':'assumed 10 Hz')+' · '+(calibration?'calibrated camera':'no camera calibration');};
 new ResizeObserver(()=>{const v=el('view');if(v.clientWidth&&v.clientHeight){renderer.setSize(v.clientWidth,v.clientHeight);camera.aspect=v.clientWidth/v.clientHeight;camera.updateProjectionMatrix()}}).observe(el('view'));
