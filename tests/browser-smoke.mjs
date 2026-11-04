@@ -9,12 +9,20 @@ const header='VERSION .7\nFIELDS x y z intensity\nSIZE 4 4 4 4\nTYPE F F F F\nCO
 const pcd=Buffer.alloc(Buffer.byteLength(header)+32);
 pcd.write(header,0,'utf8');
 for(let i=0;i<8;i++)pcd.writeFloatLE(i,Buffer.byteLength(header)+i*4);
+const velo=Buffer.alloc(32);
+for(const [i,v] of [10,0,0,.8,12,1,-1,.5].entries())velo.writeFloatLE(v,i*4);
+const png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScL/nwAAAABJRU5ErkJggg==','base64');
 let requests=0;
 await page.addInitScript(()=>{window.RANT_STREAM={base:'https://mock.rant.test/',count:8,source:'smoke fixture'}});
 await page.route('https://mock.rant.test/**',async route=>{
   requests++;
   await new Promise(resolve=>setTimeout(resolve,20));
   await route.fulfill({status:200,body:pcd,contentType:'application/octet-stream'});
+});
+await page.route('https://raw.githubusercontent.com/azureology/kitti-velo2cam/master/**',async route=>{
+  if(route.request().url().endsWith('.bin'))await route.fulfill({status:200,body:velo,contentType:'application/octet-stream'});
+  else if(route.request().url().endsWith('.png'))await route.fulfill({status:200,body:png,contentType:'image/png'});
+  else await route.abort();
 });
 try{
   await page.goto('http://127.0.0.1:4173/',{waitUntil:'domcontentloaded'});
@@ -41,6 +49,11 @@ try{
   await page.locator('#stream').click();
   await page.waitForFunction(()=>document.querySelector('#count')?.textContent==='2',null,{timeout:10000});
   await page.locator('#play').click(); // stop newly started playback
+  await page.locator('#fusion').click();
+  await page.waitForFunction(()=>document.querySelector('#count')?.textContent==='2',null,{timeout:10000});
+  await page.waitForFunction(()=>document.querySelector('#camera img')?.complete===true,null,{timeout:10000});
+  assert.equal(await page.locator('#sensor-indicator').textContent(),'LIDAR + CAMERA');
+  assert.equal(await page.locator('#mode').textContent(),'KITTI CAMERA + LIDAR');
   assert.ok(requests>0,'expected mocked frame requests');
   assert.deepEqual(errors,[],'browser console exceptions');
   console.log('Browser smoke passed: load, seek, restart, rendering');
