@@ -21,6 +21,10 @@ Download a short **synced + rectified KITTI Raw** sequence from https://www.cvli
 
 To validate the seek-priority change, open browser network throttling, start the online sample, and drag the timeline from the beginning to a distant frame. Repeat with a large local KITTI folder and verify that importing it does not eagerly load every scan. The requested frame should be fetched before prefetching its neighbors, and old-window requests should be canceled. Check the status line for cache and in-flight counts. This is a manual validation procedure; it has not been verified in an automated browser run.
 
+## Streaming diagnostics
+
+The dataset status panel reports resident scan count, active reads, cumulative bytes read (including bytes from local files), timeline seek cache hits/misses, and elapsed time from the most recent manual seek until its frame is displayed. The counters reset when the dataset changes. These are application-level counters, **not** GPU memory usage or network transfer measurements; the online byte counter counts fetched response bodies, not HTTP overhead. Failed frames are not retried indefinitely; restart the stream or reimport to retry. Aborted requests do not count as failures.
+
 ## Known limitations
 
 - Timestamps assumed 100ms apart; filename-matched camera and LiDAR frames, without calibration/projection.
