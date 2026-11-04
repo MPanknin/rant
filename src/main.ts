@@ -103,6 +103,39 @@ function updateCameraProjection(){
   el('projection-status').textContent=visible.toLocaleString()+' projected points';
 }
 (el('project-cloud') as HTMLInputElement).onchange=updateCameraProjection;
+function selectProjectedPoint(pointIndex:number,points:Float32Array){
+  const k=pointIndex*4;
+  const p=new THREE.Vector3(points[k],points[k+1],points[k+2]);
+  const uv=projectKitti(p.x,p.y,p.z);
+  const view=el('camera'),img=view.querySelector('img'),marker=el('camera-marker');
+  marker.hidden=true;
+  if(uv&&img?.naturalWidth&&img.naturalHeight&&uv[0]>=0&&uv[1]>=0&&uv[0]<img.naturalWidth&&uv[1]<img.naturalHeight){
+    const scale=Math.min(view.clientWidth/img.naturalWidth,view.clientHeight/img.naturalHeight);
+    marker.style.left=(view.clientWidth-img.naturalWidth*scale)/2+uv[0]*scale+'px';
+    marker.style.top=(view.clientHeight-img.naturalHeight*scale)/2+uv[1]*scale+'px';
+    marker.hidden=false;
+  }
+  el('inspection').textContent='Point #'+pointIndex+' · X '+p.x.toFixed(3)+' m · Y '+p.y.toFixed(3)+' m · Z '+p.z.toFixed(3)+' m · Intensity '+points[k+3].toFixed(4)+' · Range '+p.length().toFixed(2)+' m';
+}
+el('camera').addEventListener('click',e=>{
+  const f=frames[index],points=f&&(f.points??cache.get(index)),view=el('camera');
+  const img=view.querySelector('img');
+  if(!f?.calibrated||!points||!img?.naturalWidth||!img.naturalHeight)return;
+  const rect=view.getBoundingClientRect(),scale=Math.min(view.clientWidth/img.naturalWidth,view.clientHeight/img.naturalHeight);
+  const x=(e.clientX-rect.left-(view.clientWidth-img.naturalWidth*scale)/2)/scale;
+  const y=(e.clientY-rect.top-(view.clientHeight-img.naturalHeight*scale)/2)/scale;
+  if(x<0||y<0||x>=img.naturalWidth||y>=img.naturalHeight)return;
+  let nearest=-1,best=8*8;
+  for(let i=0;i<points.length;i+=4){
+    const uv=projectKitti(points[i],points[i+1],points[i+2]);
+    if(!uv)continue;
+    const d=(uv[0]-x)**2+(uv[1]-y)**2;
+    if(d<best){best=d;nearest=i/4}
+  }
+  if(nearest>=0){selectProjectedPoint(nearest,points);el('measure-overlay').textContent='Camera selection → nearest projected LiDAR return';}
+  else el('measure-overlay').textContent='No projected LiDAR return within 8 image pixels';
+});
+
 function showCamera(f:Frame){
   if(shownCameraFrame===f)return;
   shownCameraFrame=f;
@@ -155,19 +188,8 @@ renderer.domElement.addEventListener('click',e=>{
     if(measurePoints.length===2)measurePoints=[];
     measurePoints.push(p);updateMeasure();
   }else{
-    const marker=el('camera-marker');
-    marker.hidden=true;
-    if(frames[index].calibrated){
-      const uv=projectKitti(p.x,p.y,p.z);
-      const img=el('camera').querySelector('img');
-      if(uv&&img&&img.naturalWidth&&img.naturalHeight&&uv[0]>=0&&uv[1]>=0&&uv[0]<img.naturalWidth&&uv[1]<img.naturalHeight){
-        const scale=Math.min(el('camera').clientWidth/img.naturalWidth,el('camera').clientHeight/img.naturalHeight);
-        marker.style.left=(el('camera').clientWidth-img.naturalWidth*scale)/2+uv[0]*scale+'px';
-        marker.style.top=(el('camera').clientHeight-img.naturalHeight*scale)/2+uv[1]*scale+'px';
-        marker.hidden=false;
-      }
-    }
-    el('inspection').textContent='Point #'+hit.index+' · X '+p.x.toFixed(3)+' m · Y '+p.y.toFixed(3)+' m · Z '+p.z.toFixed(3)+' m · Intensity '+points[k+3].toFixed(4)+' · Range '+p.length().toFixed(2)+' m';
+    if(frames[index].calibrated)selectProjectedPoint(hit.index,points);
+    else el('inspection').textContent='Point #'+hit.index+' · X '+p.x.toFixed(3)+' m · Y '+p.y.toFixed(3)+' m · Z '+p.z.toFixed(3)+' m · Intensity '+points[k+3].toFixed(4)+' · Range '+p.length().toFixed(2)+' m';
   }
 });
 renderer.domElement.addEventListener('dblclick',e=>{const r=renderer.domElement.getBoundingClientRect();const mouse=new THREE.Vector2((e.clientX-r.left)/r.width*2-1,1-(e.clientY-r.top)/r.height*2);ray.setFromCamera(mouse,camera);geo.computeBoundingSphere();const hit=ray.intersectObject(cloud)[0];if(hit?.index!==undefined){const p=geo.attributes.position.array,k=hit.index*3;annotate(new THREE.Vector3(p[k],p[k+1],p[k+2]));return}const p=new THREE.Vector3();if(ray.ray.intersectPlane(ground,p))annotate(p)});
