@@ -11,11 +11,15 @@ npm run dev
 
 ## Online sample
 
-On start the console streams 154 consecutive HDL-64 scans (binary PCD, 10 Hz) from [udacity/SFND_Lidar_Obstacle_Detection](https://github.com/udacity/SFND_Lidar_Obstacle_Detection) (`src/sensors/data/pcd/data_2`, pinned commit) via `raw.githubusercontent.com`, which allows cross-origin fetches. Scans are fetched four at a time, about 2 s ahead of the playhead, and dropped once they fall out of the window, so memory stays at roughly 25 scans. Playback waits for the next scan instead of skipping. The scans appear to be KITTI Raw data, so KITTI's CC BY-NC-SA 3.0 terms apply. A host page can point the stream elsewhere by defining `window.RANT_STREAM = { base, count, source }` before the app script.
+On start the console streams 154 consecutive HDL-64 scans (binary PCD, 10 Hz) from [udacity/SFND_Lidar_Obstacle_Detection](https://github.com/udacity/SFND_Lidar_Obstacle_Detection) (`src/sensors/data/pcd/data_2`, pinned commit) via `raw.githubusercontent.com`, which allows cross-origin fetches. Scans are fetched four at a time, about 2 s ahead of the playhead, and dropped once they fall out of the window, so memory stays at roughly 25 scans. Seeking prioritizes the requested frame, cancels requests outside the new window, and displays cache/request counts. Playback waits for the next scan instead of skipping. The scans appear to be KITTI Raw data, so KITTI's CC BY-NC-SA 3.0 terms apply. A host page can point the stream elsewhere by defining `window.RANT_STREAM = { base, count, source }` before the app script.
 
 ## Real data
 
 Download a short **synced + rectified KITTI Raw** sequence from https://www.cvlibs.net/datasets/kitti/raw_data.php. Select an extracted parent folder containing `*_sync/velodyne_points/data/*.bin` and optionally `*_sync/image_02/data/*.png`. Up to 120 frames are read in the browser. If the online sample cannot be reached, a synthetic scene is shown.
+
+## Streaming validation
+
+To validate the seek-priority change, open browser network throttling, start the online sample, and drag the timeline from the beginning to a distant frame. The requested frame should be fetched before prefetching its neighbors, and old-window requests should be canceled. Check the status line for cache and in-flight counts. This is a manual validation procedure; it has not been verified in an automated browser run.
 
 ## Known limitations
 
