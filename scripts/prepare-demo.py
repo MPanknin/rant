@@ -3,12 +3,13 @@ Requires numpy and Pillow. Uses the official synced/rectified archive, no synthe
 """
 from pathlib import Path
 import argparse, io, json, math, hashlib, urllib.request, zipfile
+import xml.etree.ElementTree as ET
 import numpy as np
 from PIL import Image
 
 SOURCE = 'https://s3.eu-central-1.amazonaws.com/avg-kitti/raw_data/'
 DRIVE = '2011_09_26_drive_0005'
-CHECKSUMS = {'drive.zip':'eaa3635b6ad6a707a8bab53ca38567ada8c78eb743e96d558497872fa436c136','calib.zip':'e0108cfd000cf802c14ed94fba38601185c792e5640abba015a34b7a85b812e0'}
+CHECKSUMS = {'tracklets.zip':'ae896496bcc762c4b0a489730b7d1b2a24513806f5e5bd4e2eeafffc86d486a4','drive.zip':'eaa3635b6ad6a707a8bab53ca38567ada8c78eb743e96d558497872fa436c136','calib.zip':'e0108cfd000cf802c14ed94fba38601185c792e5640abba015a34b7a85b812e0'}
 DATE = '2011_09_26'
 
 def download(url, path):
@@ -54,9 +55,26 @@ def timestamps(text):
         result.append((int(h)*3600+int(m)*60+int(whole))*10**9+int(frac.ljust(9,'0')))
     return result
 
+def read_tracks(archive, frame_count):
+    with zipfile.ZipFile(archive) as z:
+        root=ET.fromstring(z.read(DATE+'/'+DRIVE+'_sync/tracklet_labels.xml'))
+    tracks=[]
+    for i,item in enumerate(root.find('tracklets').findall('item')):
+        first=int(item.findtext('first_frame'))
+        samples=[]
+        for offset,pose in enumerate(item.find('poses').findall('item')):
+            frame=first+offset
+            if not 0 <= frame < frame_count: continue
+            samples.append({'frame':frame,'position':[float(pose.findtext(k)) for k in ['tx','ty','tz']],
+                'rotation':[float(pose.findtext(k)) for k in ['rx','ry','rz']],
+                'state':int(pose.findtext('state')),'occlusion':int(pose.findtext('occlusion')),'truncation':int(pose.findtext('truncation'))})
+        if samples: tracks.append({'id':str(i),'label':item.findtext('objectType'),'size':[float(item.findtext(k)) for k in ['l','w','h']],'samples':samples})
+    return tracks
+
 def prepare(cache, output):
     archive=download(SOURCE+DRIVE+'/'+DRIVE+'_sync.zip',cache/'drive.zip')
     calibration=download(SOURCE+DATE+'_calib.zip',cache/'calib.zip')
+    tracklets=download(SOURCE+DRIVE+'/'+DRIVE+'_tracklets.zip',cache/'tracklets.zip')
     output.mkdir(parents=True,exist_ok=True)
     with zipfile.ZipFile(calibration) as z:
         cam=entries(z.read(DATE+'/calib_cam_to_cam.txt').decode())
@@ -87,13 +105,14 @@ def prepare(cache, output):
             packet=np.fromstring(z.read(root+'oxts/data/'+name+'.txt').decode(),sep=' ')
             pose=origin @ oxts_pose(packet,scale) @ imu_from_velo
             frames.append({'name':name,'time':(lt[i]-lt[0])/1e9,'cameraTime':(ct[i]-lt[0])/1e9,'lidar':name+'.bin','camera':name+'.jpg','pose':pose[:3].ravel().tolist()})
-    attribution='KITTI: Andreas Geiger, Philip Lenz, Christoph Stiller, Raquel Urtasun. Vision meets Robotics: The KITTI Dataset, IJRR 2013. CC BY-NC-SA 3.0. Modified: every fourth LiDAR return, JPEG camera encoding; GPS/IMU poses converted to world-from-Velodyne. Noncommercial research demonstration.'
-    manifest={'name':'KARLSRUHE · DRIVE 0005','source':'https://www.cvlibs.net/datasets/kitti/raw_data.php','license':'https://creativecommons.org/licenses/by-nc-sa/3.0/','attribution':attribution,'calibration':calib,'frames':frames}
+    tracks=read_tracks(tracklets,len(frames))
+    attribution='KITTI: Andreas Geiger, Philip Lenz, Christoph Stiller, Raquel Urtasun. Vision meets Robotics: The KITTI Dataset, IJRR 2013. CC BY-NC-SA 3.0. Modified: every fourth LiDAR return, JPEG camera encoding; GPS/IMU poses converted to world-from-Velodyne; original KITTI tracklet annotations converted to JSON. Noncommercial research demonstration.'
+    manifest={'name':'KARLSRUHE · DRIVE 0005','source':'https://www.cvlibs.net/datasets/kitti/raw_data.php','license':'https://creativecommons.org/licenses/by-nc-sa/3.0/','attribution':attribution,'calibration':calib,'frames':frames,'tracks':tracks,'annotationSource':'KITTI Raw tracklet_labels.xml'}
     (output/'manifest.json').write_text(json.dumps(manifest,separators=(',',':'))+'\n')
     (output/'ATTRIBUTION.txt').write_text(attribution+'\n'+manifest['source']+'\n'+manifest['license']+'\n')
     hashes={p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in output.iterdir() if p.suffix in ['.bin','.jpg']}
     (output/'checksums.json').write_text(json.dumps(hashes,indent=2)+'\n')
-    print(f'{len(frames)} real paired frames, {frames[-1]["time"]:.2f} s, {sum(p.stat().st_size for p in output.iterdir())/1048576:.1f} MiB; displacement {np.linalg.norm(np.array(frames[-1]["pose"]).reshape(3,4)[:,3]):.1f} m')
+    print(f'{len(tracks)} annotated tracks; {len(frames)} real paired frames, {frames[-1]["time"]:.2f} s, {sum(p.stat().st_size for p in output.iterdir())/1048576:.1f} MiB; displacement {np.linalg.norm(np.array(frames[-1]["pose"]).reshape(3,4)[:,3]):.1f} m')
 
 if __name__=='__main__':
     parser=argparse.ArgumentParser(); parser.add_argument('--cache',type=Path,default=Path('.cache/kitti'));parser.add_argument('--output',type=Path,default=Path('public/demo'))

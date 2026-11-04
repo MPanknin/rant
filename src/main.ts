@@ -2,6 +2,8 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import './style.css';
 import {shell} from './ui/shell';
+import {TrackWorkbench} from './rendering/track-workbench';
+import type {ObjectTrack} from './data/tracks';
 import {createCameraCache} from './data/camera-cache';
 import type {Frame,KittiCalibration} from './data/types';
 import {validateManifest} from './data/manifest';
@@ -69,7 +71,7 @@ function updateTrajectory(){
   trajectoryGeometry.setFromPoints(points);
 }
 (el('accumulate') as HTMLInputElement).onchange=()=>{accumulationDirty=true;updateAccumulation()};
-el('reset-view').onclick=()=>{camera.position.set(24,-30,19);controls.target.set(12,0,0);controls.update()};
+el('reset-view').onclick=()=>{trackWorkbench.stopFollowing();camera.position.set(24,-30,19);controls.target.set(12,0,0);controls.update()};
 const selectedPoint=new THREE.Mesh(new THREE.SphereGeometry(.24,12,10),new THREE.MeshBasicMaterial({color:0xffad38,depthTest:false}));selectedPoint.visible=false;selectedPoint.renderOrder=10;scene.add(selectedPoint);
 const measureMaterial=new THREE.LineBasicMaterial({color:0xffc46b,depthTest:false});
 const measurePointMaterial=new THREE.MeshBasicMaterial({color:0xffc46b,depthTest:false});
@@ -77,7 +79,7 @@ let toolMode:'inspect'|'measure'='inspect';
 let colorMode:'height'|'intensity'|'range'='height';
 (el('color-mode') as HTMLSelectElement).onchange=e=>{colorMode=(e.target as HTMLSelectElement).value as typeof colorMode;renderedIndex=-1;draw()};
 let measurePoints:THREE.Vector3[]=[];
-function clearMeasure(){measurePoints=[];for(const child of measurement.children)(child as THREE.Mesh).geometry.dispose();measurement.clear();el('measure-overlay').textContent=toolMode==='measure'?'Click two LiDAR points to measure their distance.':'Click a point in either view to inspect XYZ and intensity.'}
+function clearMeasure(){measurePoints=[];for(const child of measurement.children)(child as THREE.Mesh).geometry.dispose();measurement.clear();el('measure-overlay').textContent=toolMode==='measure'?'Click two LiDAR points to measure their distance.':(trackWorkbench.hasAnnotations?'Click an object box to inspect its track. Alt-click a LiDAR return.':'Click a point in either view to inspect XYZ and intensity.')}
 function updateMeasure(){
   for(const child of measurement.children)(child as THREE.Mesh).geometry.dispose();measurement.clear();
   for(const p of measurePoints){const m=new THREE.Mesh(new THREE.SphereGeometry(.18,8,6),measurePointMaterial);m.position.copy(p);measurement.add(m)}
@@ -88,12 +90,13 @@ function updateMeasure(){
     el('measure-overlay').textContent='Distance '+delta.length().toFixed(3)+' m · ΔX '+delta.x.toFixed(2)+' · ΔY '+delta.y.toFixed(2)+' · ΔZ '+delta.z.toFixed(2);
   }else el('measure-overlay').textContent='Select second point to measure distance.';
 }
-el('inspect-mode').onclick=()=>{toolMode='inspect';el('inspect-mode').classList.add('selected');el('measure-mode').classList.remove('selected');el('measure-overlay').textContent='Click a LiDAR point to inspect XYZ and intensity.'};
+el('inspect-mode').onclick=()=>{toolMode='inspect';el('inspect-mode').classList.add('selected');el('measure-mode').classList.remove('selected');el('measure-overlay').textContent=trackWorkbench.hasAnnotations?'Click an object box to inspect its track. Alt-click a LiDAR return.':'Click a LiDAR point to inspect XYZ and intensity.'};
 el('measure-mode').onclick=()=>{toolMode='measure';el('measure-mode').classList.add('selected');el('inspect-mode').classList.remove('selected');clearMeasure()};
 el('clear-measure').onclick=clearMeasure;
 
 let frames:Frame[]=[];
 let index=0,playing=false,last=0,nextId=1,playbackSpeed=1;let notes:Note[]=[];
+const trackWorkbench=new TrackWorkbench(scene,camera,controls,frame=>{setPlaying(false);seekFrame(frame)});
 const cache=new TimelineCache<Float32Array>({
   ahead:AHEAD,behind:BEHIND,concurrency:PARALLEL,maxResidentBytes:128*1024*1024,
   sizeOf:points=>points.byteLength,
@@ -124,6 +127,7 @@ const KITTI_R=[.9999239,.00983776,-.007445048,-.009869795,.9999421,-.004278459,.
 const KITTI_T=[.007533745,-.9999714,-.000616602,-.004069766,.01480249,.0007280733,-.9998902,-.07631618,.9998621,.00752379,.01480755,-.2717806];
 const SAMPLE_CALIBRATION:KittiCalibration={p:KITTI_P2,r:KITTI_R,t:KITTI_T};
 function updateCameraProjection(){
+  trackWorkbench.renderCamera();
   const canvas=el('camera-projection') as HTMLCanvasElement;
   const ctx=canvas.getContext('2d');
   if(!ctx)return;
@@ -181,6 +185,7 @@ el('camera').addEventListener('click',e=>{
   const x=(e.clientX-rect.left-(view.clientWidth-img.naturalWidth*scale)/2)/scale;
   const y=(e.clientY-rect.top-(view.clientHeight-img.naturalHeight*scale)/2)/scale;
   if(x<0||y<0||x>=img.naturalWidth||y>=img.naturalHeight)return;
+  if(!e.altKey&&trackWorkbench.pickCamera(x,y))return;
   let nearest=-1,best=8*8,nearestDepth=Infinity;
   for(let i=0;i<points.length;i+=4){
     const uv=projectKitti(points[i],points[i+1],points[i+2],f.calibration!);
@@ -208,7 +213,7 @@ function showCamera(f:Frame){
   else {const empty=document.createElement('div');empty.className='empty';empty.textContent=paired?(cameraCache.hasFailed(index)?'CAMERA IMAGE FAILED TO LOAD':'BUFFERING CAMERA…'):'NO CAMERA FRAME';view.append(empty)}
   updateCameraProjection();
 }
-function draw(){if(!frames.length)return;if(measurementFrame!==index){clearMeasure();selectedPoint.visible=false;(el('focus-selection') as HTMLButtonElement).disabled=true;measurementFrame=index}const f=frames[index];el('frame').textContent='FRAME '+String(index).padStart(3,'0');el('time').textContent=f.time.toFixed(2)+' s';(el('timeline') as HTMLInputElement).value=String(index);showCamera(f);const points=f.points??cache.get(index);if(!points){renderedIndex=-1;geo.setDrawRange(0,0);markers.clear();el('count').textContent='LOADING';accumulatedCloud.visible=false;trajectory.visible=false;return}renderedIndex=index;const pts=points,n=pts.length/4;ensure(n);const pa=geo.attributes.position as THREE.BufferAttribute,ca=geo.attributes.color as THREE.BufferAttribute,pos=pa.array as Float32Array,col=ca.array as Float32Array;for(let i=0;i<n;i++){const j=i*4,k=i*3,z=pts[j+2],h=THREE.MathUtils.clamp((z+3)/8,0,1);pos[k]=pts[j];pos[k+1]=pts[j+1];pos[k+2]=z;if(colorMode==='intensity'){
+function draw(){if(!frames.length)return;trackWorkbench.update(index);if(measurementFrame!==index){clearMeasure();selectedPoint.visible=false;(el('focus-selection') as HTMLButtonElement).disabled=true;measurementFrame=index}const f=frames[index];el('frame').textContent='FRAME '+String(index).padStart(3,'0');el('time').textContent=f.time.toFixed(2)+' s';(el('timeline') as HTMLInputElement).value=String(index);showCamera(f);const points=f.points??cache.get(index);if(!points){renderedIndex=-1;geo.setDrawRange(0,0);markers.clear();el('count').textContent='LOADING';accumulatedCloud.visible=false;trajectory.visible=false;return}renderedIndex=index;const pts=points,n=pts.length/4;ensure(n);const pa=geo.attributes.position as THREE.BufferAttribute,ca=geo.attributes.color as THREE.BufferAttribute,pos=pa.array as Float32Array,col=ca.array as Float32Array;for(let i=0;i<n;i++){const j=i*4,k=i*3,z=pts[j+2],h=THREE.MathUtils.clamp((z+3)/8,0,1);pos[k]=pts[j];pos[k+1]=pts[j+1];pos[k+2]=z;if(colorMode==='intensity'){
     const v=THREE.MathUtils.clamp(pts[j+3],0,1);col[k]=v;col[k+1]=v;col[k+2]=v;
   }else if(colorMode==='range'){
     const v=THREE.MathUtils.clamp(Math.hypot(pts[j],pts[j+1],z)/90,0,1);
@@ -216,7 +221,7 @@ function draw(){if(!frames.length)return;if(measurementFrame!==index){clearMeasu
   }else{col[k]=.12+.65*h;col[k+1]=.7-.23*h;col[k+2]=.95-.25*h}}for(const a of [pa,ca]){a.clearUpdateRanges();a.addUpdateRange(0,n*3);a.needsUpdate=true}geo.setDrawRange(0,n);geo.boundingSphere=null;markers.clear();for(const note of notes.filter(x=>x.frame===index)){const m=new THREE.Mesh(markerGeo,markerMat);m.position.set(...note.position);markers.add(m)}el('count').textContent=n.toLocaleString();if(f.calibration)updateCameraProjection();updateAccumulation();updateTrajectory();const list=el('notes');list.replaceChildren();for(const note of notes){const row=document.createElement('div');row.className='annotation';row.textContent='#'+note.id+' · '+note.label+' · frame '+note.frame;list.append(row)}}
 // Binary PCD → interleaved x,y,z,intensity, the KITTI .bin layout used everywhere else
 function parsePCD(buf:ArrayBuffer){const text=new TextDecoder().decode(new Uint8Array(buf,0,Math.min(buf.byteLength,4096))),at=text.indexOf('\nDATA ');if(at<0)throw Error('Not a PCD file');const lines=text.slice(0,at).split('\n'),get=(k:string)=>lines.find(l=>l.startsWith(k+' '))?.trim().split(/\s+/).slice(1)??[];const eol=text.indexOf('\n',at+1),mode=text.slice(at+6,eol).trim();if(mode!=='binary')throw Error('Unsupported PCD data: '+mode);const fields=get('FIELDS'),size=get('SIZE').map(Number),type=get('TYPE'),count=get('COUNT').map(Number),n=Number(get('POINTS')[0]);let stride=0;const off:Record<string,number>={};fields.forEach((f,i)=>{off[f]=stride;stride+=size[i]*(count[i]||1)});const isF32=(f:string)=>{const i=fields.indexOf(f);return i>=0&&type[i]==='F'&&size[i]===4};if(!isF32('x')||!isF32('y')||!isF32('z'))throw Error('PCD needs float32 x, y, z');const hasI=isF32('intensity'),v=new DataView(buf,eol+1),out=new Float32Array(n*4);if(v.byteLength<n*stride)throw Error('PCD file is truncated');for(let p=0,b=0;p<n;p++,b+=stride){out[p*4]=v.getFloat32(b+off.x,true);out[p*4+1]=v.getFloat32(b+off.y,true);out[p*4+2]=v.getFloat32(b+off.z,true);out[p*4+3]=hasI?v.getFloat32(b+off.intensity,true):0}return out}
-function setFrames(next:Frame[],mode:string){setPlaying(false);shownCameraFrame=undefined;frames=next;accumulatedCloud.visible=false;selectedPoint.visible=false;(el('focus-selection') as HTMLButtonElement).disabled=true;notes=[];index=0;renderedIndex=-1;measurementFrame=-1;cameraCache.reset(0);cache.reset(next[0]?.url||next[0]?.file?next.length:0);cameraCache.reset(next.length);accumulationDirty=true;(el('timeline') as HTMLInputElement).max=String(frames.length-1);el('mode').textContent=mode;el('recording-capabilities').textContent=[next.some(f=>f.url||f.file)?'LIDAR':'',next.some(f=>f.imageFile||f.imageUrl)?'RGB CAMERA':'',next.some(f=>f.calibration)?'CALIBRATED':'',next.some(f=>f.pose)?'POSES':''].filter(Boolean).join(' · ');
+function setFrames(next:Frame[],mode:string,tracks:ObjectTrack[]=[]){setPlaying(false);shownCameraFrame=undefined;frames=next;accumulatedCloud.visible=false;selectedPoint.visible=false;(el('focus-selection') as HTMLButtonElement).disabled=true;notes=[];index=0;renderedIndex=-1;measurementFrame=-1;trackWorkbench.setRecording(next,tracks);cameraCache.reset(0);cache.reset(next[0]?.url||next[0]?.file?next.length:0);cameraCache.reset(next.length);accumulationDirty=true;(el('timeline') as HTMLInputElement).max=String(frames.length-1);el('mode').textContent=mode;el('recording-capabilities').textContent=[next.some(f=>f.url||f.file)?'LIDAR':'',next.some(f=>f.imageFile||f.imageUrl)?'RGB CAMERA':'',next.some(f=>f.calibration)?'CALIBRATED':'',next.some(f=>f.pose)?'POSES':'',tracks.length?tracks.length+' TRACKS':''].filter(Boolean).join(' · ');
   const matched=next.filter(f=>f.imageFile||f.imageUrl).length;
   el('camera-sync').textContent=matched+' / '+next.length+' MATCHED';
   geo.setDrawRange(0,0);el('count').textContent='—';draw()}
@@ -254,7 +259,7 @@ el('load-manifest').onclick=async()=>{
     const response=await fetch(parsed.href);
     if(!response.ok)throw Error('Manifest HTTP '+response.status);
     const result=validateManifest(await response.json(),parsed.href);
-    if(request!==recordingRequest)return;setPlaying(false);setFrames(result.frames,result.name);
+    if(request!==recordingRequest)return;setPlaying(false);setFrames(result.frames,result.name,result.tracks);
     el('status').textContent=result.frames.length+' remote frames indexed · '+result.frames.filter(f=>f.imageUrl).length+' camera frames · '+result.frames.filter(f=>f.pose).length+' poses';
   }catch(error){if(request===recordingRequest)el('status').textContent='Manifest error: '+String(error)}
   finally{button.disabled=false}
@@ -273,7 +278,7 @@ async function loadShowcase(){
     const url=new URL('demo/manifest.json',document.baseURI).href;
     const response=await fetch(url);if(!response.ok)throw Error('Dataset HTTP '+response.status);
     const result=validateManifest(await response.json(),url);if(request!==recordingRequest)return;
-    setFrames(result.frames,result.name);setPlaying(true);
+    setFrames(result.frames,result.name,result.tracks);setPlaying(true);
   }catch(error){if(request===recordingRequest){el('mode').textContent='SHOWCASE UNAVAILABLE';el('status').textContent=String(error)+' · Use recordings to retry or import data.';el('transport-status').textContent='DATA ERROR'}}
 }
 el('showcase').onclick=()=>void loadShowcase();
@@ -292,11 +297,15 @@ function annotate(p:THREE.Vector3){notes.push({id:nextId++,frame:index,label:(el
 el('add').onclick=()=>annotate(new THREE.Vector3(0,0,0));
 // Double click snaps to the nearest scan point under the cursor, otherwise to the ground plane
 const ray=new THREE.Raycaster();ray.params.Points.threshold=.25;const ground=new THREE.Plane(new THREE.Vector3(0,0,1),-GROUND_Z);
+let pointerStart:[number,number]=[0,0];
+renderer.domElement.addEventListener('pointerdown',e=>{pointerStart=[e.clientX,e.clientY]});
 renderer.domElement.addEventListener('click',e=>{
+  if(Math.hypot(e.clientX-pointerStart[0],e.clientY-pointerStart[1])>5)return;
   if(renderedIndex!==index||geo.drawRange.count===0||e.detail>1)return;
   const r=renderer.domElement.getBoundingClientRect();
   const mouse=new THREE.Vector2((e.clientX-r.left)/r.width*2-1,1-(e.clientY-r.top)/r.height*2);
   ray.setFromCamera(mouse,camera);
+  if(toolMode==='inspect'&&!e.altKey&&trackWorkbench.pick(ray))return;
   const hit=ray.intersectObject(cloud)[0];
   if(hit?.index===undefined)return;
   const points=frames[index].points??cache.get(index);

@@ -1,7 +1,8 @@
+import {validateTracks,type ObjectTrack} from './tracks.ts';
 import type {Frame,KittiCalibration} from './types.ts';
 import {isRigidPose} from '../geometry/poses.ts';
-type RecordingManifest={name?:string;frames:Array<{time:number;cameraTime?:number;name?:string;lidar:string;camera?:string;pose?:number[]}>;calibration?:KittiCalibration};
-export function validateManifest(raw:unknown,manifestUrl:string):{name:string;frames:Frame[]}{
+type RecordingManifest={name?:string;tracks?:ObjectTrack[];frames:Array<{time:number;cameraTime?:number;name?:string;lidar:string;camera?:string;pose?:number[]}>;calibration?:KittiCalibration};
+export function validateManifest(raw:unknown,manifestUrl:string):{name:string;frames:Frame[];tracks:ObjectTrack[]}{
   if(!raw||typeof raw!=='object')throw Error('Manifest must be a JSON object');
   const manifest=raw as RecordingManifest;
   if(!Array.isArray(manifest.frames)||manifest.frames.length<2||manifest.frames.length>20000)throw Error('Manifest needs 2–20000 frames');
@@ -24,5 +25,5 @@ export function validateManifest(raw:unknown,manifestUrl:string):{name:string;fr
     if(!/\.(bin|pcd)(?:[?#]|$)/i.test(url))throw Error('LiDAR URL must end in .bin or .pcd');
     return {time:item.time,cameraTime:item.cameraTime,name:item.name??String(i).padStart(6,'0'),url,imageUrl:item.camera?resolve(item.camera):undefined,calibration,pose:item.pose};
   });
-  return {name:manifest.name??'REMOTE MULTIMODAL',frames};
+  return {name:manifest.name??'REMOTE MULTIMODAL',frames,tracks:validateTracks(manifest.tracks,frames.length)};
 }
