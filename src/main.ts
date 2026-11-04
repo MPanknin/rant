@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import './style.css';
 import { TimelineCache } from './data/timeline-cache';
+import { parseKittiTimestamps, nearestTimestampIndex } from './data/synchronization';
 
 type Frame={time:number;points?:Float32Array;url?:string;file?:File;image?:string;imageFile?:File;name:string};
 type Note={id:number;frame:number;label:string;position:[number,number,number]};
@@ -58,13 +59,22 @@ el('stream').onclick=streamOnline;
 (el('timeline') as HTMLInputElement).oninput=e=>{const next=Number((e.target as HTMLInputElement).value);if(next===index)return;index=next;cache.seek(next);if(renderedIndex!==next)draw()};
 (el('folder') as HTMLInputElement).onchange=async e=>{const files=Array.from((e.target as HTMLInputElement).files||[]);const scans=files.filter(f=>/velodyne_points\/data\/[^/]+\.bin$/i.test(f.webkitRelativePath)).sort((a,b)=>a.name.localeCompare(b.name));const images=new Map(files.filter(f=>/image_02\/data\/[^/]+\.(png|jpe?g)$/i.test(f.webkitRelativePath)).map(f=>[f.name.replace(/\.[^.]+$/,''),f]));if(!scans.length){el('status').textContent='No KITTI .bin scans found';return}setPlaying(false);
   const stampFile=files.find(f=>/velodyne_points\/timestamps\.txt$/i.test(f.webkitRelativePath));
-  let seconds:number[]=[];
-  if(stampFile){
-    const lines=(await stampFile.text()).trim().split(/\r?\n/);
-    const times=lines.map(line=>Date.parse(line.trim().replace(' ','T')+'Z'));
-    if(times.length===scans.length&&times.every(Number.isFinite)&&times.every((t,i)=>i===0||t>=times[i-1]))seconds=times.map(t=>(t-times[0])/1000);
-  }
-  const next:Frame[]=scans.map((file,i)=>{const name=file.name.replace(/\.bin$/i,'');return {time:seconds[i]??i*.1,file,imageFile:images.get(name),name}});
+  const lidarTimes=stampFile?parseKittiTimestamps(await stampFile.text()):undefined;
+  const seconds=lidarTimes?.length===scans.length?lidarTimes:undefined;
+  const cameraFiles=files.filter(f=>/image_02\/data\/[^/]+\.(png|jpe?g)$/i.test(f.webkitRelativePath)).sort((a,b)=>a.name.localeCompare(b.name));
+  const cameraStampFile=files.find(f=>/image_02\/timestamps\.txt$/i.test(f.webkitRelativePath));
+  const cameraTimes=cameraStampFile?parseKittiTimestamps(await cameraStampFile.text()):undefined;
+  const syncedCameraTimes=cameraTimes?.length===cameraFiles.length?cameraTimes:undefined;
+  // Each timestamp file has its own origin; align using the original absolute timestamps
+  // rather than independently normalized offsets.
+  const absoluteLidar=stampFile&&seconds?parseKittiTimestamps(await stampFile.text()):undefined;
+  const absoluteCamera=cameraStampFile&&syncedCameraTimes?parseKittiTimestamps(await cameraStampFile.text()):undefined;
+  const cameraByName=new Map(cameraFiles.map(f=>[f.name.replace(/\.[^.]+$/,''),f]));
+  const next:Frame[]=scans.map((file,i)=>{
+    const name=file.name.replace(/\.bin$/i,'');
+    const cameraIndex=absoluteLidar&&absoluteCamera?nearestTimestampIndex(absoluteCamera,absoluteLidar[i],0.05):undefined;
+    return {time:seconds?.[i]??i*.1,file,imageFile:cameraIndex===undefined?(!absoluteLidar||!absoluteCamera?cameraByName.get(name):undefined):cameraFiles[cameraIndex],name};
+  });
   setFrames(next,'KITTI RAW');el('status').textContent=frames.length+' scans indexed lazily · '+(seconds.length?'KITTI timestamps':'assumed 10 Hz');};
 new ResizeObserver(()=>{const v=el('view');if(v.clientWidth&&v.clientHeight){renderer.setSize(v.clientWidth,v.clientHeight);camera.aspect=v.clientWidth/v.clientHeight;camera.updateProjectionMatrix()}}).observe(el('view'));
 // Playback waits on the next scan, so a slow stream buffers instead of skipping
