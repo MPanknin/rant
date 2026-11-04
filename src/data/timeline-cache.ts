@@ -50,6 +50,7 @@ export class TimelineCache<T> {
   seek(index:number):void {
     if(!Number.isInteger(index)||index<0||index>=this.count||index===this.cursor)return;
     this.cursor=index;
+    this.failures.clear();
     if(this.values.has(index)){this.hits++;this.seekMs=0;this.seekStart=0}
     else {this.misses++;this.seekStart=performance.now()}
     this.evictOutsideWindow();
@@ -87,7 +88,7 @@ export class TimelineCache<T> {
     const distance=(j:number)=>Math.min((j-this.cursor+this.count)%this.count,(this.cursor-j+this.count)%this.count);
     const victims=[...this.values.keys()].filter(j=>j!==this.cursor).sort((a,b)=>distance(b)-distance(a));
     while(this.residentBytes+size>this.budget&&victims.length)this.remove(victims.shift()!);
-    if(this.residentBytes+size>this.budget)return;
+    if(this.residentBytes+size>this.budget){this.failures.add(i);return;}
     this.values.set(i,value);this.residentBytes+=size;
   }
   private notify():void {this.options.onChange?.()}
