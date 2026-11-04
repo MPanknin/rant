@@ -26,6 +26,7 @@ const cloud=new THREE.Points(geo,new THREE.PointsMaterial({size:.095,vertexColor
 const markerGeo=new THREE.SphereGeometry(.35,10,8),markerMat=new THREE.MeshBasicMaterial({color:0xffbd70});
 const markers=new THREE.Group();scene.add(cloud,markers);
 const measurement=new THREE.Group();scene.add(measurement);
+const selectedPoint=new THREE.Mesh(new THREE.SphereGeometry(.24,12,10),new THREE.MeshBasicMaterial({color:0xffad38,depthTest:false}));selectedPoint.visible=false;selectedPoint.renderOrder=10;scene.add(selectedPoint);
 const measureMaterial=new THREE.LineBasicMaterial({color:0xffc46b,depthTest:false});
 const measurePointMaterial=new THREE.MeshBasicMaterial({color:0xffc46b,depthTest:false});
 let toolMode:'inspect'|'measure'='inspect';
@@ -106,6 +107,7 @@ function updateCameraProjection(){
 function selectProjectedPoint(pointIndex:number,points:Float32Array){
   const k=pointIndex*4;
   const p=new THREE.Vector3(points[k],points[k+1],points[k+2]);
+  selectedPoint.position.copy(p);selectedPoint.visible=true;
   const uv=projectKitti(p.x,p.y,p.z);
   const view=el('camera'),img=view.querySelector('img'),marker=el('camera-marker');
   marker.hidden=true;
@@ -149,7 +151,7 @@ function showCamera(f:Frame){
   else {const empty=document.createElement('div');empty.className='empty';empty.textContent='NO CAMERA FRAME · Online sample contains LiDAR only';view.append(empty)}
   updateCameraProjection();
 }
-function draw(){if(!frames.length)return;if(measurementFrame!==index){clearMeasure();measurementFrame=index}const f=frames[index];if(lastImageFrame&&lastImageFrame!==f&&lastImageFrame.image){URL.revokeObjectURL(lastImageFrame.image);lastImageFrame.image=undefined}lastImageFrame=f;el('frame').textContent='FRAME '+String(index).padStart(3,'0');el('time').textContent=f.time.toFixed(2)+' s';(el('timeline') as HTMLInputElement).value=String(index);showCamera(f);const points=f.points??cache.get(index);if(!points){renderedIndex=-1;geo.setDrawRange(0,0);markers.clear();el('count').textContent='LOADING';return}renderedIndex=index;const pts=points,n=pts.length/4;ensure(n);const pa=geo.attributes.position as THREE.BufferAttribute,ca=geo.attributes.color as THREE.BufferAttribute,pos=pa.array as Float32Array,col=ca.array as Float32Array;for(let i=0;i<n;i++){const j=i*4,k=i*3,z=pts[j+2],h=THREE.MathUtils.clamp((z+3)/8,0,1);pos[k]=pts[j];pos[k+1]=pts[j+1];pos[k+2]=z;if(colorMode==='intensity'){
+function draw(){if(!frames.length)return;if(measurementFrame!==index){clearMeasure();selectedPoint.visible=false;measurementFrame=index}const f=frames[index];if(lastImageFrame&&lastImageFrame!==f&&lastImageFrame.image){URL.revokeObjectURL(lastImageFrame.image);lastImageFrame.image=undefined}lastImageFrame=f;el('frame').textContent='FRAME '+String(index).padStart(3,'0');el('time').textContent=f.time.toFixed(2)+' s';(el('timeline') as HTMLInputElement).value=String(index);showCamera(f);const points=f.points??cache.get(index);if(!points){renderedIndex=-1;geo.setDrawRange(0,0);markers.clear();el('count').textContent='LOADING';return}renderedIndex=index;const pts=points,n=pts.length/4;ensure(n);const pa=geo.attributes.position as THREE.BufferAttribute,ca=geo.attributes.color as THREE.BufferAttribute,pos=pa.array as Float32Array,col=ca.array as Float32Array;for(let i=0;i<n;i++){const j=i*4,k=i*3,z=pts[j+2],h=THREE.MathUtils.clamp((z+3)/8,0,1);pos[k]=pts[j];pos[k+1]=pts[j+1];pos[k+2]=z;if(colorMode==='intensity'){
     const v=THREE.MathUtils.clamp(pts[j+3],0,1);col[k]=v;col[k+1]=v;col[k+2]=v;
   }else if(colorMode==='range'){
     const v=THREE.MathUtils.clamp(Math.hypot(pts[j],pts[j+1],z)/90,0,1);
@@ -157,7 +159,7 @@ function draw(){if(!frames.length)return;if(measurementFrame!==index){clearMeasu
   }else{col[k]=.12+.65*h;col[k+1]=.7-.23*h;col[k+2]=.95-.25*h}}for(const a of [pa,ca]){a.clearUpdateRanges();a.addUpdateRange(0,n*3);a.needsUpdate=true}geo.setDrawRange(0,n);markers.clear();for(const note of notes.filter(x=>x.frame===index)){const m=new THREE.Mesh(markerGeo,markerMat);m.position.set(...note.position);markers.add(m)}el('count').textContent=n.toLocaleString();if(f.calibrated)updateCameraProjection();const list=el('notes');list.replaceChildren();for(const note of notes){const row=document.createElement('div');row.className='annotation';row.textContent='#'+note.id+' · '+note.label+' · frame '+note.frame;list.append(row)}}
 // Binary PCD → interleaved x,y,z,intensity, the KITTI .bin layout used everywhere else
 function parsePCD(buf:ArrayBuffer){const text=new TextDecoder().decode(new Uint8Array(buf,0,Math.min(buf.byteLength,4096))),at=text.indexOf('\nDATA ');if(at<0)throw Error('Not a PCD file');const lines=text.slice(0,at).split('\n'),get=(k:string)=>lines.find(l=>l.startsWith(k+' '))?.trim().split(/\s+/).slice(1)??[];const eol=text.indexOf('\n',at+1),mode=text.slice(at+6,eol).trim();if(mode!=='binary')throw Error('Unsupported PCD data: '+mode);const fields=get('FIELDS'),size=get('SIZE').map(Number),type=get('TYPE'),count=get('COUNT').map(Number),n=Number(get('POINTS')[0]);let stride=0;const off:Record<string,number>={};fields.forEach((f,i)=>{off[f]=stride;stride+=size[i]*(count[i]||1)});const isF32=(f:string)=>{const i=fields.indexOf(f);return i>=0&&type[i]==='F'&&size[i]===4};if(!isF32('x')||!isF32('y')||!isF32('z'))throw Error('PCD needs float32 x, y, z');const hasI=isF32('intensity'),v=new DataView(buf,eol+1),out=new Float32Array(n*4);if(v.byteLength<n*stride)throw Error('PCD file is truncated');for(let p=0,b=0;p<n;p++,b+=stride){out[p*4]=v.getFloat32(b+off.x,true);out[p*4+1]=v.getFloat32(b+off.y,true);out[p*4+2]=v.getFloat32(b+off.z,true);out[p*4+3]=hasI?v.getFloat32(b+off.intensity,true):0}return out}
-function setFrames(next:Frame[],mode:string){if(lastImageFrame?.image){URL.revokeObjectURL(lastImageFrame.image);lastImageFrame.image=undefined}lastImageFrame=undefined;shownCameraFrame=undefined;frames=next;notes=[];index=0;renderedIndex=-1;measurementFrame=-1;cache.reset(next[0]?.url||next[0]?.file?next.length:0);(el('timeline') as HTMLInputElement).max=String(frames.length-1);el('mode').textContent=mode;
+function setFrames(next:Frame[],mode:string){if(lastImageFrame?.image){URL.revokeObjectURL(lastImageFrame.image);lastImageFrame.image=undefined}lastImageFrame=undefined;shownCameraFrame=undefined;frames=next;selectedPoint.visible=false;notes=[];index=0;renderedIndex=-1;measurementFrame=-1;cache.reset(next[0]?.url||next[0]?.file?next.length:0);(el('timeline') as HTMLInputElement).max=String(frames.length-1);el('mode').textContent=mode;
   const matched=next.filter(f=>f.imageFile||f.imageUrl).length;
   el('camera-sync').textContent=matched+' / '+next.length+' MATCHED';
   geo.setDrawRange(0,0);el('count').textContent='—';draw()}
