@@ -44,3 +44,9 @@ The dataset status panel reports resident scan count, active reads, cumulative b
 ## Next
 
 Parse real timestamps and calibration, support coordinate frame transforms, decode in a worker, cuboids/tracks, and MCAP adapter.
+
+## Browser smoke validation
+
+Feature-branch CI launches headless Chromium against the Vite development server, intercepts the online PCD requests with a deterministic two-point binary fixture, and checks initial rendering, repeated timeline seeking and stream restart. The smoke test does not validate camera calibration, actual KITTI file import, GPU memory consumption, or long-duration playback; those remain manual/integration checks.
+
+Local KITTI folder imports use `velodyne_points/timestamps.txt` when it has a timestamp for every scan; otherwise the viewer assumes 10 Hz. Camera images are matched to scan files by basename.
