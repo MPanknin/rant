@@ -8,7 +8,7 @@ type Note={id:number;frame:number;label:string;position:[number,number,number]};
 // Online sample: consecutive HDL-64 street scans (binary PCD, KITTI-derived) from Udacity's SFND course repo, served by GitHub with CORS.
 // A host page can point the stream elsewhere by defining window.RANT_STREAM before this script runs.
 const STREAM:{base:string;count:number;source:string}=(globalThis as any).RANT_STREAM??{base:'https://raw.githubusercontent.com/udacity/SFND_Lidar_Obstacle_Detection/ef15da2bc172359e7d6edfdd156a2a243d10977e/src/sensors/data/pcd/data_2/',count:154,source:'udacity/SFND_Lidar_Obstacle_Detection on GitHub'};
-const AHEAD=20,BEHIND=4,PARALLEL=4;// bounded cache: ~2 s ahead of the playhead, at most ~25 scans (~50 MB) in memory
+const AHEAD=20,BEHIND=4,PARALLEL=4;// 128 MiB decoded-frame budget plus a playhead-centered prefetch window
 const app=document.querySelector<HTMLDivElement>('#app')!;
 app.innerHTML=`<header><b>◉ RANT <span>/ ROBOT SENSOR CONSOLE</span></b><a href="https://www.cvlibs.net/datasets/kitti/raw_data.php" target="_blank" rel="noopener">KITTI RAW DATA ↗</a></header><main><section id="viewport"><div id="view"></div><div class="float pane">SPATIAL VIEW · <span id="count">—</span> POINTS</div><div class="hint">Drag orbit · Scroll zoom · Right drag pan · Double click annotate</div></section><aside><div class="pane">CAMERA / IMAGE_02</div><div id="camera" class="camera"><div class="empty">NO CAMERA FRAME<br/>Import KITTI images to inspect</div></div><div class="pane">DATASET / <span id="mode">SYNTHETIC</span></div><div class="panel"><p>Streams ${STREAM.count} consecutive HDL-64 scans from ${STREAM.source}, buffering about 2 s ahead. Or select a local KITTI Raw sync folder containing velodyne_points/data and optionally image_02/data.</p><div class="actions"><button id="stream" class="upload">STREAM ONLINE SAMPLE</button><label class="upload">IMPORT KITTI FOLDER<input id="folder" type="file" webkitdirectory multiple /></label></div><p id="status"></p></div><div class="pane">ANNOTATIONS</div><div class="panel"><input id="label" type="text" value="object" placeholder="Label"/><button id="add">ADD AT ORIGIN</button> <button id="export">EXPORT JSON</button><div id="notes"></div></div><div class="pane">COORDINATES</div><div class="panel"><p>KITTI Velodyne: X forward, Y left, Z up. Camera projection and ego-motion compensation are not implemented.</p></div></aside></main><footer><button id="play">▶</button><span id="frame">FRAME 000</span><input id="timeline" type="range" min="0" max="23" value="0"/><span id="time">0.0 s</span></footer>`;
 const el=(id:string)=>document.getElementById(id)!;
@@ -24,7 +24,6 @@ function ensure(n:number){if(n<=cap)return;cap=Math.ceil(n*1.1);geo.dispose();ge
 const cloud=new THREE.Points(geo,new THREE.PointsMaterial({size:.095,vertexColors:true}));cloud.frustumCulled=false;
 const markerGeo=new THREE.SphereGeometry(.35,10,8),markerMat=new THREE.MeshBasicMaterial({color:0xffbd70});
 const markers=new THREE.Group();scene.add(cloud,markers);
-function synthetic(t:number){const a:number[]=[];for(let i=0;i<13000;i++){a.push((Math.random()-.2)*80,(Math.random()-.5)*55,-1.5+(Math.random()-.5)*.12,1)}for(let o=0;o<8;o++){const cx=8+o*7+Math.sin(t*.15+o),cy=(o%3-1)*9;for(let i=0;i<600;i++){const u=Math.random()-.5,v=Math.random()-.5;const face=i%5;a.push(cx+(face===0?1.5:face===1?-1.5:u*3),cy+(face===2?1:face===3?-1:v*2),face===4?1.7:Math.random()*3-1.3,1)}}return new Float32Array(a)}
 let frames:Frame[]=[];
 let index=0,playing=false,last=0,nextId=1;let notes:Note[]=[];
 const cache=new TimelineCache<Float32Array>({
@@ -56,7 +55,7 @@ renderer.domElement.addEventListener('dblclick',e=>{const r=renderer.domElement.
 el('export').onclick=()=>{const blob=new Blob([JSON.stringify({schema:'rant/annotations/v1',notes},null,2)],{type:'application/json'});const url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download='rant-annotations.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)};
 el('play').onclick=()=>setPlaying(!playing);
 el('stream').onclick=streamOnline;
-(el('timeline') as HTMLInputElement).oninput=e=>{const next=Number((e.target as HTMLInputElement).value);if(next===index)return;index=next;cache.seek(next);draw()};
+(el('timeline') as HTMLInputElement).oninput=e=>{const next=Number((e.target as HTMLInputElement).value);if(next===index)return;index=next;cache.seek(next);if(renderedIndex!==next)draw()};
 (el('folder') as HTMLInputElement).onchange=async e=>{const files=Array.from((e.target as HTMLInputElement).files||[]);const scans=files.filter(f=>/velodyne_points\/data\/[^/]+\.bin$/i.test(f.webkitRelativePath)).sort((a,b)=>a.name.localeCompare(b.name));const images=new Map(files.filter(f=>/image_02\/data\/[^/]+\.(png|jpe?g)$/i.test(f.webkitRelativePath)).map(f=>[f.name.replace(/\.[^.]+$/,''),f]));if(!scans.length){el('status').textContent='No KITTI .bin scans found';return}setPlaying(false);
   const stampFile=files.find(f=>/velodyne_points\/timestamps\.txt$/i.test(f.webkitRelativePath));
   let seconds:number[]=[];
@@ -69,4 +68,4 @@ el('stream').onclick=streamOnline;
   setFrames(next,'KITTI RAW');el('status').textContent=frames.length+' scans indexed lazily · '+(seconds.length?'KITTI timestamps':'assumed 10 Hz');};
 new ResizeObserver(()=>{const v=el('view');if(v.clientWidth&&v.clientHeight){renderer.setSize(v.clientWidth,v.clientHeight);camera.aspect=v.clientWidth/v.clientHeight;camera.updateProjectionMatrix()}}).observe(el('view'));
 // Playback waits on the next scan, so a slow stream buffers instead of skipping
-function loop(now:number){requestAnimationFrame(loop);if(playing&&frames.length&&now-last>=100){const next=(index+1)%frames.length;if(frames[next].points||cache.get(next)){last=now;index=next;cache.seek(next);draw()}}controls.update();renderer.render(scene,camera)}streamOnline();requestAnimationFrame(loop);
+function loop(now:number){requestAnimationFrame(loop);if(playing&&frames.length&&now-last>=100){const next=(index+1)%frames.length;if(frames[next].points||cache.get(next)){last=now;index=next;cache.seek(next);if(renderedIndex!==next)draw()}}controls.update();renderer.render(scene,camera)}streamOnline();requestAnimationFrame(loop);
