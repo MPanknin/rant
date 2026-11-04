@@ -59,16 +59,13 @@ el('stream').onclick=streamOnline;
 (el('timeline') as HTMLInputElement).oninput=e=>{const next=Number((e.target as HTMLInputElement).value);if(next===index)return;index=next;cache.seek(next);if(renderedIndex!==next)draw()};
 (el('folder') as HTMLInputElement).onchange=async e=>{const files=Array.from((e.target as HTMLInputElement).files||[]);const scans=files.filter(f=>/velodyne_points\/data\/[^/]+\.bin$/i.test(f.webkitRelativePath)).sort((a,b)=>a.name.localeCompare(b.name));const images=new Map(files.filter(f=>/image_02\/data\/[^/]+\.(png|jpe?g)$/i.test(f.webkitRelativePath)).map(f=>[f.name.replace(/\.[^.]+$/,''),f]));if(!scans.length){el('status').textContent='No KITTI .bin scans found';return}setPlaying(false);
   const stampFile=files.find(f=>/velodyne_points\/timestamps\.txt$/i.test(f.webkitRelativePath));
-  const lidarTimes=stampFile?parseKittiTimestamps(await stampFile.text()):undefined;
-  const seconds=lidarTimes?.length===scans.length?lidarTimes:undefined;
+  const lidarTimes=stampFile?parseKittiTimestamps(await stampFile.text(),false):undefined;
+  const absoluteLidar=lidarTimes?.length===scans.length?lidarTimes:undefined;
+  const seconds=absoluteLidar?.map(t=>t-absoluteLidar[0]);
   const cameraFiles=files.filter(f=>/image_02\/data\/[^/]+\.(png|jpe?g)$/i.test(f.webkitRelativePath)).sort((a,b)=>a.name.localeCompare(b.name));
   const cameraStampFile=files.find(f=>/image_02\/timestamps\.txt$/i.test(f.webkitRelativePath));
-  const cameraTimes=cameraStampFile?parseKittiTimestamps(await cameraStampFile.text()):undefined;
-  const syncedCameraTimes=cameraTimes?.length===cameraFiles.length?cameraTimes:undefined;
-  // Each timestamp file has its own origin; align using the original absolute timestamps
-  // rather than independently normalized offsets.
-  const absoluteLidar=stampFile&&seconds?parseKittiTimestamps(await stampFile.text()):undefined;
-  const absoluteCamera=cameraStampFile&&syncedCameraTimes?parseKittiTimestamps(await cameraStampFile.text()):undefined;
+  const cameraTimes=cameraStampFile?parseKittiTimestamps(await cameraStampFile.text(),false):undefined;
+  const absoluteCamera=cameraTimes?.length===cameraFiles.length?cameraTimes:undefined;
   const cameraByName=new Map(cameraFiles.map(f=>[f.name.replace(/\.[^.]+$/,''),f]));
   const next:Frame[]=scans.map((file,i)=>{
     const name=file.name.replace(/\.bin$/i,'');
