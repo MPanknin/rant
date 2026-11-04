@@ -20,6 +20,19 @@ Enable **ACCUMULATE 20 SCANS** to compare one observation with a denser environm
 
 Other recordings, the original 154-frame Udacity LiDAR stream, the original single-frame fusion sample, remote manifests and local KITTI import remain available under **Recordings & import**.
 
+## Tracked-object inspection
+
+The default drive includes **15 genuine KITTI Raw tracklets**: 9 cars, 3 vans, 2 pedestrians and 1 cyclist. The cyclist (#1) spans all 154 frames. These are dataset reference annotations (including the dataset's interpolated labels), not predictions from a model running in the browser.
+
+- Click a cuboid in the camera or 3D view to select the same object in both views. **Alt-click** retains point-level LiDAR inspection; measurement mode still picks individual returns.
+- **Object tracks** lists every annotated object and its frame interval. The inspector reports class, length/width/height, sensor-local bottom-center position, and estimated world speed when ego poses exist.
+- **FIRST / LAST** jump to the selected object's first/last annotated frame. The yellow timeline ribbon marks its actual presence, including any gaps.
+- **FOCUS** centers the 3D camera once. **FOLLOW** keeps the object centered while allowing orbit and zoom, pauses outside its annotated interval, and resumes when the object returns. Reset view disables following.
+- The selected trajectory is built from object observations transformed through measured ego poses and then into the current sensor frame. It includes past and future annotated observations. Gaps and missing ego poses are not connected. No object pose is invented outside its labeled frames.
+- Camera cuboids use the same calibrated coordinate chain as LiDAR projection, with near-plane clipping. Disabling LiDAR overlay leaves object boxes visible. **BOXES** hides both the cuboids and selected trajectory.
+
+The preparation script also downloads the official `2011_09_26_drive_0005_tracklets.zip` (SHA-256 pinned) and converts `tracklet_labels.xml` without changing its frame indices, dimensions, bottom-center translations, rotations or annotation-state fields. The SDK convention is confirmed by KITTI's `matlab/run_demoTracklets.m`: local X length, Y width, Z from 0 to height, then rotation and translation in Velodyne coordinates. The same KITTI attribution and CC BY-NC-SA 3.0 terms apply.
+
 ## Data attribution and reproducibility
 
 Source: [KITTI Raw](https://www.cvlibs.net/datasets/kitti/raw_data.php), by Andreas Geiger, Philip Lenz, Christoph Stiller and Raquel Urtasun, *Vision meets Robotics: The KITTI Dataset*, IJRR 2013. Dataset and derived preview files: [CC BY-NC-SA 3.0](https://creativecommons.org/licenses/by-nc-sa/3.0/), for this noncommercial research demonstration. These terms apply to the data, separately from application code.
@@ -66,6 +79,8 @@ Load an HTTP(S) manifest under **Recordings & import**. Relative paths resolve a
 
 This is a schema illustration, not a real dataset. A manifest has 2–20,000 frames with finite, strictly increasing `time` values in seconds. `camera`, `cameraTime` and `pose` are optional per frame; missing cameras are shown explicitly. `lidar` accepts raw interleaved float32 XYZ/intensity `.bin` or binary PCD. Query strings are supported. An optional top-level `calibration` object supplies `p` (12), `r` (9), and `t` (12) finite numbers, respectively row-major projection, rectification and camera-from-Velodyne matrices. Poses are rigid row-major 3×4 **world-from-Velodyne** transforms; scale, reflection and nonfinite matrices are rejected.
 
+Manifests may additionally provide a top-level `tracks` array. Each track has a unique string `id`, a `label`, `size: [length, width, height]` in metres, and ordered `samples`. Each sample supplies an exact zero-based `frame`, `position: [x,y,z]` at the cuboid bottom center in that frame's Velodyne coordinates, and `rotation: [roll,pitch,yaw]` in radians composed as Rz × Ry × Rx. Optional integer `state`, `occlusion` and `truncation` retain source annotation metadata. Missing samples mean absent annotations; Rant does not interpolate them. Limits are 2,000 tracks and 200,000 total samples. Without `tracks`, the object tools are disabled and existing recording behavior is preserved.
+
 ## Local KITTI import
 
 Select a KITTI Raw folder containing `velodyne_points/data/*.bin`, optionally `image_02/data/*` and sensor timestamp files. Files are indexed lazily; camera matches use the nearest timestamp within 50 ms, or filenames when timestamps are unavailable. Without complete LiDAR timestamps, the importer assumes 10 Hz.
@@ -85,7 +100,7 @@ npx playwright install chromium
 node tests/run-browser.mjs      # starts and stops its own test server
 ```
 
-Browser tests include the original mocked workflow regression suite and a separate **unmocked real-data** integration test: initial lazy loading, projection, distinct consecutive images, synchronized playback, stepping, far seeks, 20-scan reconstruction, missing frames, local import and responsive layout. `RANT_TEST_URL` on the individual browser scripts can target a deployed build. CI uploads desktop/mobile screenshots. After Pages deployment, it reruns the real-data browser test against the public URL and checks `revision.txt` against the deployed commit. Unit fixtures test exact translation/rotation composition, projection and calibration layouts, invalid manifests, memory limits and stale request disposal.
+Browser tests include the original mocked workflow regression suite and a separate **unmocked real-data** integration test: initial lazy loading, projection, distinct consecutive images, synchronized playback, stepping, far seeks, 20-scan reconstruction, missing frames, local import and responsive layout. The real-data object workflow additionally clicks camera and 3D cuboids, verifies linked selection, follows playback, jumps between annotation endpoints, and checks disappearance/re-entry and overlay toggles. `RANT_TEST_URL` on the individual browser scripts can target a deployed build. CI uploads desktop/mobile screenshots. After Pages deployment, it reruns the real-data browser test against the public URL and checks `revision.txt` against the deployed commit. Unit fixtures test exact translation/rotation composition, projection and calibration layouts, invalid manifests, memory limits and stale request disposal.
 
 The real-data alignment test compares stationary scenery from frames 20 and 30; with this sampled data its median nearest-return error drops from roughly 1.76 m to 0.22 m after applying the measured poses. This is a sanity check, not a general reconstruction accuracy guarantee.
 
@@ -95,5 +110,5 @@ The real-data alignment test compares stationary scenery from frames 20 and 30; 
 - Moving objects can leave trails in accumulated scans. OXTS noise and LiDAR sampling limit alignment precision.
 - The default drive is 15.8 seconds and spatially subsampled; this is a compact demonstration, not a benchmark distribution.
 - WebGL2 is required. Software-rendered Chromium checks do not establish GPU performance on every device.
-- Local KITTI import does not infer or convert arbitrary camera/IMU pose conventions. Annotations remain frame-local points, not tracked objects.
+- Local KITTI import does not infer or convert arbitrary camera/IMU pose conventions. User-created annotations remain frame-local points. Tracked cuboids are read-only dataset annotations; editing track labels and importing local tracklet XML are not implemented.
 - No radar, ROS/MCAP or multi-camera playback yet.

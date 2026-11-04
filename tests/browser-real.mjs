@@ -1,5 +1,6 @@
 import {chromium} from 'playwright';
 import assert from 'node:assert/strict';
+import {verifyTrackWorkflow} from './track-workflow.mjs';
 // No intercepted requests: exercise the actual prepared recording and renderer.
 const browser=await chromium.launch({headless:true,args:['--enable-webgl','--use-gl=angle','--use-angle=swiftshader','--enable-unsafe-swiftshader']});
 const page=await browser.newPage({viewport:{width:1440,height:960}}),errors=[],sensorRequests=new Set();
@@ -43,6 +44,7 @@ try{
  assert.match(await page.locator('#camera-sync').textContent(),/SYNC/);
  for(const i of [130,10,80,0])await seek(i);
  assert.match(await page.locator('#status').textContent(),/0 failed/);
+ await verifyTrackWorkflow(page,seek,base);
  await page.setViewportSize({width:390,height:844});await page.screenshot({path:'/tmp/rant-real-mobile.png',fullPage:true});
  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true,'mobile horizontal layout fits');
  assert.deepEqual(errors,[]);

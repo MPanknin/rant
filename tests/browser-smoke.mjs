@@ -27,7 +27,7 @@ await page.route('https://raw.githubusercontent.com/azureology/kitti-velo2cam/ma
   else if(route.request().url().endsWith('.png'))await route.fulfill({status:200,body:png,contentType:'image/png'});
   else await route.abort();
 });
-await page.route('https://mock.rant.test/recording.json',route=>route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({name:'TEST MULTIMODAL',frames:[{time:0,lidar:'https://mock.rant.test/000000.pcd',camera:'https://raw.githubusercontent.com/azureology/kitti-velo2cam/master/data_object_image_2/testing/image_2/000007.png',pose:[1,0,0,0,0,1,0,0,0,0,1,0]},{time:.1,lidar:'https://mock.rant.test/000001.pcd',camera:'https://raw.githubusercontent.com/azureology/kitti-velo2cam/master/data_object_image_2/testing/image_2/000007.png',pose:[1,0,0,.2,0,1,0,0,0,0,1,0]}]})}));
+await page.route('https://mock.rant.test/recording.json',route=>route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({name:'TEST MULTIMODAL',tracks:[{id:'fixture-track',label:'Car',size:[4,2,2],samples:[{frame:0,position:[10,0,-1],rotation:[0,0,0]},{frame:1,position:[10,0,-1],rotation:[0,0,0]}]}],frames:[{time:0,lidar:'https://mock.rant.test/000000.pcd',camera:'https://raw.githubusercontent.com/azureology/kitti-velo2cam/master/data_object_image_2/testing/image_2/000007.png',pose:[1,0,0,0,0,1,0,0,0,0,1,0]},{time:.1,lidar:'https://mock.rant.test/000001.pcd',camera:'https://raw.githubusercontent.com/azureology/kitti-velo2cam/master/data_object_image_2/testing/image_2/000007.png',pose:[1,0,0,.2,0,1,0,0,0,0,1,0]}]})}));
 try{
   await page.goto(process.env.RANT_TEST_URL??'http://127.0.0.1:4173/',{waitUntil:'domcontentloaded'});
   await page.locator('#play').click(); // stop auto-play to make seeks deterministic
@@ -64,6 +64,8 @@ try{
   await page.waitForFunction(()=>document.querySelector('#camera img')?.complete===true,null,{timeout:10000});
   assert.equal(await page.locator('#sensor-indicator').textContent(),'LIDAR + CAMERA');
   assert.equal(await page.locator('#mode').textContent(),'KITTI CAMERA + LIDAR');
+  assert.equal(await page.locator('#track-select').isDisabled(),true);
+  assert.equal(await page.locator('#track-projection g').count(),0);
   assert.equal(await page.locator('#project-cloud').isChecked(),true);
   await page.locator('#project-cloud').uncheck();
   await page.locator('#project-cloud').check();
@@ -74,6 +76,8 @@ try{
   await page.locator('#manifest-url').fill('https://mock.rant.test/recording.json');
   await page.locator('#load-manifest').click();
   await page.waitForFunction(()=>document.querySelector('#mode')?.textContent==='TEST MULTIMODAL'&&document.querySelector('#count')?.textContent==='2',null,{timeout:10000});
+  await page.locator('#track-select').selectOption('fixture-track');
+  await page.locator('#follow-track').check();
   await page.locator('#accumulate').check();
   assert.match(await page.locator('#accumulation-status').textContent(),/scans accumulated/);
   await page.locator('#next-frame').click();
@@ -89,6 +93,9 @@ try{
     await page.locator('#folder').setInputFiles(local);
     await page.waitForFunction(()=>document.querySelector('#mode')?.textContent==='KITTI RAW'&&document.querySelector('#count')?.textContent==='2');
     assert.equal(await page.locator('#timeline').getAttribute('max'),'2');
+    assert.equal(await page.locator('#track-select').isDisabled(),true,'dataset switch clears object tracks');
+    assert.equal(await page.locator('#follow-track').isChecked(),false,'dataset switch clears following');
+    assert.equal(await page.locator('#track-range').isVisible(),false);
     await page.locator('#calibration-files').setInputFiles([
       {name:'calib_cam_to_cam.txt',mimeType:'text/plain',buffer:Buffer.from('P_rect_02: 100 0 50 0 0 100 40 0 0 0 1 0\nR_rect_00: 1 0 0 0 1 0 0 0 1')},
       {name:'calib_velo_to_cam.txt',mimeType:'text/plain',buffer:Buffer.from('R: 0 -1 0 0 0 -1 1 0 0\nT: 0 0 0')}

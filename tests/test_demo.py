@@ -21,6 +21,20 @@ class DemoTest(unittest.TestCase):
             self.assertGreater((ROOT/frame['lidar']).stat().st_size,160000)
             with Image.open(ROOT/frame['camera']) as image:self.assertEqual(image.size,(1242,375))
 
+    def test_genuine_tracklet_labels(self):
+        manifest=json.loads((ROOT/'manifest.json').read_text());tracks=manifest['tracks']
+        self.assertEqual(manifest['annotationSource'],'KITTI Raw tracklet_labels.xml')
+        self.assertEqual(len(tracks),15)
+        self.assertEqual(sum(t['label']=='Car' for t in tracks),9)
+        cyclist=next(t for t in tracks if t['id']=='1')
+        self.assertEqual(cyclist['label'],'Cyclist')
+        self.assertEqual([s['frame'] for s in cyclist['samples']],list(range(154)))
+        np.testing.assert_allclose(cyclist['samples'][0]['position'],[6.066743617835025,-1.6238558086924506,-1.7047194242477417])
+        self.assertEqual([s['frame'] for s in tracks[2]['samples']],list(range(6)))
+        for t in tracks:
+            self.assertTrue(all(v>0 for v in t['size']))
+            self.assertTrue(all(np.isfinite(s['position']+s['rotation']).all() for s in t['samples']))
+
     def test_pose_alignment_on_static_scenery(self):
         frames=json.loads((ROOT/'manifest.json').read_text())['frames']
         def pose(i):

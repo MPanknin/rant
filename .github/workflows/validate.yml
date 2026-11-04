@@ -51,5 +51,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: rant-browser-verification
-          path: /tmp/rant-real-*.png
+          path: |
+            /tmp/rant-real-*.png
+            /tmp/rant-tracks-*.png
           if-no-files-found: ignore
