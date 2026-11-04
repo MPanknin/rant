@@ -4,14 +4,14 @@ import './style.css';
 import { TimelineCache } from './data/timeline-cache';
 import { parseKittiTimestamps, nearestTimestampIndex } from './data/synchronization';
 
-type Frame={time:number;points?:Float32Array;url?:string;file?:File;image?:string;imageFile?:File;imageUrl?:string;name:string};
+type Frame={time:number;points?:Float32Array;url?:string;file?:File;image?:string;imageFile?:File;imageUrl?:string;calibrated?:boolean;name:string};
 type Note={id:number;frame:number;label:string;position:[number,number,number]};
 // Online sample: consecutive HDL-64 street scans (binary PCD, KITTI-derived) from Udacity's SFND course repo, served by GitHub with CORS.
 // A host page can point the stream elsewhere by defining window.RANT_STREAM before this script runs.
 const STREAM:{base:string;count:number;source:string}=(globalThis as any).RANT_STREAM??{base:'https://raw.githubusercontent.com/udacity/SFND_Lidar_Obstacle_Detection/ef15da2bc172359e7d6edfdd156a2a243d10977e/src/sensors/data/pcd/data_2/',count:154,source:'udacity/SFND_Lidar_Obstacle_Detection on GitHub'};
 const AHEAD=20,BEHIND=4,PARALLEL=4;// 128 MiB decoded-frame budget plus a playhead-centered prefetch window
 const app=document.querySelector<HTMLDivElement>('#app')!;
-app.innerHTML=`<header><b>◉ RANT <span>/ ROBOT SENSOR CONSOLE</span></b><a href="https://www.cvlibs.net/datasets/kitti/raw_data.php" target="_blank" rel="noopener">KITTI RAW DATA ↗</a></header><main><section id="viewport"><div id="view"></div><div class="float pane">SPATIAL VIEW · <span id="count">—</span> POINTS</div><div class="hint">Drag orbit · Scroll zoom · Right drag pan · Click inspect / measure · Double click annotate</div><div class="tools"><button id="inspect-mode" class="selected">INSPECT</button><button id="measure-mode">MEASURE</button><button id="clear-measure">CLEAR</button><select id="color-mode" aria-label="Point color mode"><option value="height">HEIGHT</option><option value="intensity">INTENSITY</option><option value="range">RANGE</option></select></div><div id="measure-overlay" class="measure-overlay">Click a point to inspect its XYZ and intensity.</div></section><aside><div class="pane">CAMERA / IMAGE_02 <span id="camera-sync">NO CAMERA SOURCE</span></div><div id="camera" class="camera"><div class="empty">NO CAMERA FRAME<br/>Import KITTI images to inspect</div></div><div class="pane">DATASET / <span id="mode">SYNTHETIC</span></div><div class="panel"><p>Streams ${STREAM.count} consecutive HDL-64 scans from ${STREAM.source}, buffering about 2 s ahead. Or select a local KITTI Raw sync folder containing velodyne_points/data and optionally image_02/data.</p><div class="actions"><button id="stream" class="upload">STREAM LIDAR SEQUENCE</button><button id="fusion" class="upload">LOAD CAMERA + LIDAR EXAMPLE</button><label class="upload">IMPORT KITTI FOLDER<input id="folder" type="file" webkitdirectory multiple /></label></div><p id="status"></p></div><div class="pane">POINT INSPECTOR</div><div class="panel" id="inspection">Select a point in the 3D view.</div><div class="pane">ANNOTATIONS</div><div class="panel"><input id="label" type="text" value="object" placeholder="Label"/><button id="add">ADD AT ORIGIN</button> <button id="export">EXPORT JSON</button><div id="notes"></div></div><div class="pane">COORDINATES</div><div class="panel"><p>KITTI Velodyne: X forward, Y left, Z up. Camera projection and ego-motion compensation are not implemented.</p></div></aside></main><footer><button id="play">▶</button><span id="frame">FRAME 000</span><input id="timeline" type="range" min="0" max="23" value="0"/><span id="time">0.0 s</span><span id="sensor-indicator">LIDAR ONLY</span></footer>`;
+app.innerHTML=`<header><b>◉ RANT <span>/ ROBOT SENSOR CONSOLE</span></b><a href="https://www.cvlibs.net/datasets/kitti/raw_data.php" target="_blank" rel="noopener">KITTI RAW DATA ↗</a></header><main><section id="viewport"><div id="view"></div><div class="float pane">SPATIAL VIEW · <span id="count">—</span> POINTS</div><div class="hint">Drag orbit · Scroll zoom · Right drag pan · Click inspect / measure · Double click annotate</div><div class="tools"><button id="inspect-mode" class="selected">INSPECT</button><button id="measure-mode">MEASURE</button><button id="clear-measure">CLEAR</button><select id="color-mode" aria-label="Point color mode"><option value="height">HEIGHT</option><option value="intensity">INTENSITY</option><option value="range">RANGE</option></select></div><div id="measure-overlay" class="measure-overlay">Click a point to inspect its XYZ and intensity.</div></section><aside><div class="pane">CAMERA / IMAGE_02 <span id="camera-sync">NO CAMERA SOURCE</span></div><div id="camera" class="camera"><div id="camera-marker" class="camera-marker" hidden></div><div class="empty">NO CAMERA FRAME<br/>Import KITTI images to inspect</div></div><div class="pane">DATASET / <span id="mode">SYNTHETIC</span></div><div class="panel"><p>Streams ${STREAM.count} consecutive HDL-64 scans from ${STREAM.source}, buffering about 2 s ahead. Or select a local KITTI Raw sync folder containing velodyne_points/data and optionally image_02/data.</p><div class="actions"><button id="stream" class="upload">STREAM LIDAR SEQUENCE</button><button id="fusion" class="upload">LOAD CAMERA + LIDAR EXAMPLE</button><label class="upload">IMPORT KITTI FOLDER<input id="folder" type="file" webkitdirectory multiple /></label></div><p id="status"></p></div><div class="pane">POINT INSPECTOR</div><div class="panel" id="inspection">Select a point in the 3D view.</div><div class="pane">ANNOTATIONS</div><div class="panel"><input id="label" type="text" value="object" placeholder="Label"/><button id="add">ADD AT ORIGIN</button> <button id="export">EXPORT JSON</button><div id="notes"></div></div><div class="pane">COORDINATES</div><div class="panel"><p>KITTI Velodyne: X forward, Y left, Z up. Camera projection and ego-motion compensation are not implemented.</p></div></aside></main><footer><button id="play">▶</button><span id="frame">FRAME 000</span><input id="timeline" type="range" min="0" max="23" value="0"/><span id="time">0.0 s</span><span id="sensor-indicator">LIDAR ONLY</span></footer>`;
 const el=(id:string)=>document.getElementById(id)!;
 const renderer=new THREE.WebGLRenderer({antialias:true});renderer.setPixelRatio(Math.min(devicePixelRatio,2));renderer.setClearColor(0x0a111c);el('view').appendChild(renderer.domElement);
 const scene=new THREE.Scene();scene.fog=new THREE.FogExp2(0x0a111c,.007);
@@ -64,12 +64,23 @@ const cache=new TimelineCache<Float32Array>({
 });
 let renderedIndex=-1;let lastImageFrame:Frame|undefined;let measurementFrame=-1;let shownCameraFrame:Frame|undefined;
 function updateBufferStatus(){const stats=cache.stats;const source=frames[0]?.file?'local KITTI folder':frames[0]?.imageUrl?'public KITTI paired sample':STREAM.source;el('status').textContent=`${stats.resident} / ${frames.length} cached · ${(stats.residentBytes/1048576).toFixed(1)} / 128 MiB resident · ${stats.active} active · ${(stats.bytesRead/1048576).toFixed(1)} MiB read · hits ${stats.hits} / misses ${stats.misses} · last seek ${stats.lastSeekMs.toFixed(0)} ms · ${stats.failures} failed · ${source}`;}
+const KITTI_P2=[721.5377,0,609.5593,44.85728,0,721.5377,172.854,0.2163791,0,0,1,0.002745884];
+const KITTI_R=[.9999239,.00983776,-.007445048,-.009869795,.9999421,-.004278459,.007402527,.004351614,.9999631];
+const KITTI_T=[.007533745,-.9999714,-.000616602,-.004069766,.01480249,.0007280733,-.9998902,-.07631618,.9998621,.00752379,.01480755,-.2717806];
+function projectKitti(x:number,y:number,z:number):[number,number]|undefined{
+  const a=KITTI_T,c=[a[0]*x+a[1]*y+a[2]*z+a[3],a[4]*x+a[5]*y+a[6]*z+a[7],a[8]*x+a[9]*y+a[10]*z+a[11]];
+  const r=KITTI_R,q=[r[0]*c[0]+r[1]*c[1]+r[2]*c[2],r[3]*c[0]+r[4]*c[1]+r[5]*c[2],r[6]*c[0]+r[7]*c[1]+r[8]*c[2]];
+  const p=KITTI_P2,den=p[8]*q[0]+p[9]*q[1]+p[10]*q[2]+p[11];
+  if(den<=0)return;
+  return [(p[0]*q[0]+p[1]*q[1]+p[2]*q[2]+p[3])/den,(p[4]*q[0]+p[5]*q[1]+p[6]*q[2]+p[7])/den];
+}
 function showCamera(f:Frame){
   if(shownCameraFrame===f)return;
   shownCameraFrame=f;
   el('camera-sync').textContent=f.imageFile||f.imageUrl?'PAIRED FRAME':'NO CAMERA SOURCE';
   el('sensor-indicator').textContent=f.imageFile||f.imageUrl?'LIDAR + CAMERA':'LIDAR ONLY';
   const view=el('camera');view.replaceChildren();
+  const marker=document.createElement('div');marker.id='camera-marker';marker.className='camera-marker';marker.hidden=true;view.append(marker);
   if(f.imageFile&&!f.image)f.image=URL.createObjectURL(f.imageFile);
   if(f.image||f.imageUrl){const img=document.createElement('img');img.src=f.image??f.imageUrl!;img.alt='Camera frame '+f.name;img.onerror=()=>{view.textContent='CAMERA IMAGE FAILED TO LOAD'};view.append(img)}
   else view.textContent='NO CAMERA FRAME · Online sample contains LiDAR only';
@@ -91,7 +102,7 @@ function streamOnline(){el('status').textContent='Connecting to '+STREAM.source;
 function loadPairedExample(){
   setPlaying(false);
   const base='https://raw.githubusercontent.com/azureology/kitti-velo2cam/master/';
-  setFrames([{time:0,name:'000007',url:base+'data_object_velodyne/testing/velodyne/000007.bin',imageUrl:base+'data_object_image_2/testing/image_2/000007.png'}],'KITTI CAMERA + LIDAR');
+  setFrames([{time:0,name:'000007',url:base+'data_object_velodyne/testing/velodyne/000007.bin',imageUrl:base+'data_object_image_2/testing/image_2/000007.png',calibrated:true}],'KITTI CAMERA + LIDAR');
   el('status').textContent='Loading paired KITTI example from azureology/kitti-velo2cam';
 }
 el('fusion').onclick=loadPairedExample;
@@ -113,6 +124,18 @@ renderer.domElement.addEventListener('click',e=>{
     if(measurePoints.length===2)measurePoints=[];
     measurePoints.push(p);updateMeasure();
   }else{
+    const marker=el('camera-marker');
+    marker.hidden=true;
+    if(frames[index].calibrated){
+      const uv=projectKitti(p.x,p.y,p.z);
+      const img=el('camera').querySelector('img');
+      if(uv&&img&&img.naturalWidth&&img.naturalHeight&&uv[0]>=0&&uv[1]>=0&&uv[0]<img.naturalWidth&&uv[1]<img.naturalHeight){
+        const scale=Math.min(el('camera').clientWidth/img.naturalWidth,el('camera').clientHeight/img.naturalHeight);
+        marker.style.left=(el('camera').clientWidth-img.naturalWidth*scale)/2+uv[0]*scale+'px';
+        marker.style.top=(el('camera').clientHeight-img.naturalHeight*scale)/2+uv[1]*scale+'px';
+        marker.hidden=false;
+      }
+    }
     el('inspection').textContent='Point #'+hit.index+' · X '+p.x.toFixed(3)+' m · Y '+p.y.toFixed(3)+' m · Z '+p.z.toFixed(3)+' m · Intensity '+points[k+3].toFixed(4)+' · Range '+p.length().toFixed(2)+' m';
   }
 });
