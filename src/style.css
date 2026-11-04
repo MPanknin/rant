@@ -8,3 +8,5 @@
 .camera{position:relative}.camera-marker{position:absolute;width:16px;height:16px;border:2px solid #ffb347;background:#ffb34755;border-radius:50%;transform:translate(-50%,-50%);z-index:2;pointer-events:none;box-shadow:0 0 0 3px #111a2bcc}.camera-marker[hidden]{display:none}
 
 .camera-projection{position:absolute;inset:0;z-index:1;pointer-events:none}.camera-options{padding:9px 16px;display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:11px;color:#a6c7d7}.camera-options label{display:flex;align-items:center;gap:7px;cursor:pointer}.camera-options input{accent-color:#53c3d7}#projection-status{color:#6cb6c9;text-align:right}
+
+#playback-speed{background:#20334b;border:1px solid #49627e;color:#e2edfa;border-radius:5px;padding:7px 5px;font:inherit;font-size:12px}#prev-frame,#next-frame{padding:7px 11px;font-size:20px;line-height:1}@media(max-width:760px){footer{gap:5px;padding:0 7px}#playback-speed{max-width:62px;padding:4px 2px}#prev-frame,#next-frame{padding:5px 8px}#frame{font-size:10px}#time{font-size:10px}}
