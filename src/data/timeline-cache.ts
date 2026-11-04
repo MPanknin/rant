@@ -1,10 +1,13 @@
-export interface StreamStats { resident:number; active:number; bytesRead:number; hits:number; misses:number; lastSeekMs:number; failures:number }
-export interface StreamItem<T> { value?:T; bytes?:number }
+export interface StreamStats {
+  resident:number; residentBytes:number; active:number; bytesRead:number;
+  hits:number; misses:number; lastSeekMs:number; failures:number;
+}
 export interface StreamOptions<T> {
   load:(index:number,signal:AbortSignal)=>Promise<{value:T;bytes:number}>;
+  sizeOf:(value:T)=>number;
   onChange?:()=>void;
   onError?:(index:number,error:unknown)=>void;
-  ahead?:number; behind?:number; concurrency?:number;
+  ahead?:number; behind?:number; concurrency?:number; maxResidentBytes?:number;
 }
 export class TimelineCache<T> {
   private values=new Map<number,T>();
@@ -14,61 +17,94 @@ export class TimelineCache<T> {
   private cursor=0;
   private count=0;
   private bytes=0;
+  private residentBytes=0;
   private hits=0;
   private misses=0;
   private seekStart=0;
   private seekMs=0;
-  private ahead:number;
-  private behind:number;
-  private concurrency:number;
-  constructor(private options:StreamOptions<T>) {
+  private readonly ahead:number;
+  private readonly behind:number;
+  private readonly concurrency:number;
+  private readonly budget:number;
+  constructor(private readonly options:StreamOptions<T>) {
     this.ahead=options.ahead??20;
     this.behind=options.behind??4;
     this.concurrency=options.concurrency??4;
+    this.budget=options.maxResidentBytes??128*1024*1024;
+    if(!Number.isInteger(this.concurrency)||this.concurrency<1||!Number.isFinite(this.budget)||this.budget<=0)throw Error('Invalid cache configuration');
   }
   reset(count:number):void {
+    if(!Number.isInteger(count)||count<0)throw Error('Invalid frame count');
     this.generation++;
     for(const request of this.active.values())request.abort();
     this.active.clear();this.values.clear();this.failures.clear();
-    this.count=count;this.cursor=0;this.bytes=0;this.hits=0;this.misses=0;this.seekStart=0;this.seekMs=0;
+    this.count=count;this.cursor=0;this.bytes=0;this.residentBytes=0;
+    this.hits=0;this.misses=0;this.seekStart=0;this.seekMs=0;
     this.notify();this.pump();
   }
   get(index:number):T|undefined {return this.values.get(index)}
   get playhead():number {return this.cursor}
-  get stats():StreamStats {return {resident:this.values.size,active:this.active.size,bytesRead:this.bytes,hits:this.hits,misses:this.misses,lastSeekMs:this.seekMs,failures:this.failures.size}}
+  get stats():StreamStats {
+    return {resident:this.values.size,residentBytes:this.residentBytes,active:this.active.size,bytesRead:this.bytes,hits:this.hits,misses:this.misses,lastSeekMs:this.seekMs,failures:this.failures.size};
+  }
   seek(index:number):void {
     if(!Number.isInteger(index)||index<0||index>=this.count||index===this.cursor)return;
     this.cursor=index;
     if(this.values.has(index)){this.hits++;this.seekMs=0;this.seekStart=0}
     else {this.misses++;this.seekStart=performance.now()}
-    this.evict();
-    this.pump();
-    this.notify();
+    this.evictOutsideWindow();
+    this.pump();this.notify();
   }
   dispose():void {this.reset(0)}
   private inside(i:number):boolean {
     if(this.count===0)return false;
     return (i-this.cursor+this.count)%this.count<=this.ahead||(this.cursor-i+this.count)%this.count<=this.behind;
   }
-  private evict():void {
-    for(const i of this.values.keys())if(!this.inside(i))this.values.delete(i);
+  private remove(i:number):void {
+    const value=this.values.get(i);
+    if(value===undefined)return;
+    this.residentBytes-=this.options.sizeOf(value);
+    this.values.delete(i);
+  }
+  private evictOutsideWindow():void {
+    for(const i of this.values.keys())if(!this.inside(i))this.remove(i);
     for(const [i,request] of this.active)if(!this.inside(i)){this.active.delete(i);request.abort()}
+  }
+  private priorities():number[] {
+    if(!this.count)return [];
+    const order=[this.cursor];
+    for(let i=1;i<=Math.min(this.ahead,this.count-1);i++)order.push((this.cursor+i)%this.count);
+    for(let i=1;i<=Math.min(this.behind,this.count-1);i++)order.push((this.cursor-i+this.count)%this.count);
+    return [...new Set(order)];
+  }
+  private retain(i:number,value:T):void {
+    const size=this.options.sizeOf(value);
+    if(!Number.isFinite(size)||size<0)throw Error('Invalid frame size');
+    // A single oversized playhead frame is displayed but never cached; the caller
+    // must handle its lifecycle separately if it needs to keep it visible.
+    if(size>this.budget){if(i===this.cursor)this.options.onError?.(i,new Error('Frame exceeds resident memory budget'));this.failures.add(i);return}
+    // Evict farthest non-playhead entries first, preserving current frame.
+    const distance=(j:number)=>Math.min((j-this.cursor+this.count)%this.count,(this.cursor-j+this.count)%this.count);
+    const victims=[...this.values.keys()].filter(j=>j!==this.cursor).sort((a,b)=>distance(b)-distance(a));
+    while(this.residentBytes+size>this.budget&&victims.length)this.remove(victims.shift()!);
+    if(this.residentBytes+size>this.budget)return;
+    this.values.set(i,value);this.residentBytes+=size;
   }
   private notify():void {this.options.onChange?.()}
   private pump():void {
     if(!this.count)return;
-    const priority=[this.cursor,...Array.from({length:Math.min(this.ahead,this.count-1)},(_,i)=>(this.cursor+i+1)%this.count),...Array.from({length:Math.min(this.behind,this.count-1)},(_,i)=>(this.cursor-i-1+this.count)%this.count)];
-    for(const i of new Set(priority)){
+    for(const i of this.priorities()){
       if(this.active.size>=this.concurrency)break;
       if(this.values.has(i)||this.active.has(i)||this.failures.has(i))continue;
-      const controller=new AbortController();
-      const generation=this.generation;
+      // Avoid prefetching when the budget is already occupied by the playhead.
+      if(i!==this.cursor&&this.residentBytes>=this.budget)continue;
+      const controller=new AbortController(),generation=this.generation;
       this.active.set(i,controller);
       void this.options.load(i,controller.signal).then(({value,bytes})=>{
         if(generation!==this.generation||controller.signal.aborted)return;
         this.bytes+=bytes;
-        if(this.inside(i))this.values.set(i,value);
-        if(i===this.cursor&&this.seekStart){this.seekMs=performance.now()-this.seekStart;this.seekStart=0}
+        if(this.inside(i))this.retain(i,value);
+        if(i===this.cursor&&this.values.has(i)&&this.seekStart){this.seekMs=performance.now()-this.seekStart;this.seekStart=0}
       }).catch(error=>{
         if(generation!==this.generation||controller.signal.aborted)return;
         this.failures.add(i);this.options.onError?.(i,error);
