@@ -4,3 +4,5 @@
 .tools select{background:#20334b;border:1px solid #49627e;border-radius:5px;color:#e2edfa;font:inherit;font-size:11px;padding:8px;cursor:pointer}@media(max-width:760px){.tools{flex-wrap:wrap;right:10px}.tools button,.tools select{padding:6px}.measure-overlay{top:140px}}
 
 #camera-sync{float:right;color:#64c6d4;font-size:10px;letter-spacing:.05em}#sensor-indicator{font-size:10px;white-space:nowrap;letter-spacing:.07em;color:#8ecbd3}@media(max-width:760px){#sensor-indicator{display:none}}
+
+.camera{position:relative}.camera-marker{position:absolute;width:16px;height:16px;border:2px solid #ffb347;background:#ffb34755;border-radius:50%;transform:translate(-50%,-50%);z-index:2;pointer-events:none;box-shadow:0 0 0 3px #111a2bcc}.camera-marker[hidden]{display:none}
