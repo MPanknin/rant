@@ -58,7 +58,7 @@ try{
   await page.locator('#project-cloud').uncheck();
   await page.locator('#project-cloud').check();
   assert.equal(await page.locator('#camera-projection').count(),1);
-  await page.locator('#camera').click({position:{x:50,y:50}});
+  await page.locator('#camera').click({position:{x:177,y:120}});
   assert.ok((await page.locator('#measure-overlay').textContent()).includes('projected LiDAR')|| (await page.locator('#measure-overlay').textContent()).includes('No projected LiDAR'));
   assert.ok(requests>0,'expected mocked frame requests');
   assert.deepEqual(errors,[],'browser console exceptions');
