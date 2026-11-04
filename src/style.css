@@ -2,3 +2,5 @@
 .tools{position:absolute;top:64px;left:18px;display:flex;gap:6px;z-index:2}.tools button{padding:8px 10px;font-size:11px;letter-spacing:.08em}.tools button.selected{background:#176c80;border-color:#58c5d9;color:#fff}.measure-overlay{position:absolute;top:110px;left:18px;background:#101b2bdc;border:1px solid #40536d;border-radius:5px;padding:10px 12px;color:#dce9f7;font-size:12px;pointer-events:none;max-width:min(500px,calc(100% - 36px))}#inspection{color:#c9e7f2;line-height:1.7;font-variant-numeric:tabular-nums}@media(max-width:760px){.tools{top:58px;left:10px}.measure-overlay{top:104px;left:10px}.hint{font-size:10px;bottom:8px}}
 
 .tools select{background:#20334b;border:1px solid #49627e;border-radius:5px;color:#e2edfa;font:inherit;font-size:11px;padding:8px;cursor:pointer}@media(max-width:760px){.tools{flex-wrap:wrap;right:10px}.tools button,.tools select{padding:6px}.measure-overlay{top:140px}}
+
+#camera-sync{float:right;color:#64c6d4;font-size:10px;letter-spacing:.05em}#sensor-indicator{font-size:10px;white-space:nowrap;letter-spacing:.07em;color:#8ecbd3}@media(max-width:760px){#sensor-indicator{display:none}}
