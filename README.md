@@ -17,6 +17,33 @@ On start the console streams 154 consecutive HDL-64 scans (binary PCD, 10 Hz) fr
 
 Download a short **synced + rectified KITTI Raw** sequence from https://www.cvlibs.net/datasets/kitti/raw_data.php. Select an extracted parent folder containing `*_sync/velodyne_points/data/*.bin` and optionally `*_sync/image_02/data/*.png`. Frames are indexed from the selected folder without eagerly reading all LiDAR bytes. The same bounded playhead cache is used for local files and online data; camera images are opened lazily when displayed. If the online sample cannot be reached, a synthetic scene is shown.
 
+## Remote multimodal recording manifests
+
+Paste an HTTP(S) URL into **STREAM MULTIMODAL MANIFEST** to load a synchronized camera/LiDAR recording. The manifest and sensor URLs must be accessible from the browser with CORS enabled. Relative sensor URLs resolve against the manifest's URL. LiDAR files must be raw KITTI-style `.bin` (interleaved float32 XYZ/intensity) or binary PCD; camera images can be PNG/JPEG. The loader validates timestamps, calibration and poses before indexing frames, and uses the same bounded scan cache as local recordings.
+
+Example `manifest.json` (replace the paths with real synchronized files):
+
+```json
+{
+  "name": "MY MULTIMODAL RECORDING",
+  "calibration": {
+    "p": [721.5377, 0, 609.5593, 44.85728, 0, 721.5377, 172.854, 0.2163791, 0, 0, 1, 0.002745884],
+    "r": [0.9999239, 0.00983776, -0.007445048, -0.009869795, 0.9999421, -0.004278459, 0.007402527, 0.004351614, 0.9999631],
+    "t": [0.007533745, -0.9999714, -0.000616602, -0.004069766, 0.01480249, 0.0007280733, -0.9998902, -0.07631618, 0.9998621, 0.00752379, 0.01480755, -0.2717806]
+  },
+  "frames": [
+    {"time": 0, "lidar": "./velodyne/000000.bin", "camera": "./image_02/000000.png", "pose": [1,0,0,0,0,1,0,0,0,0,1,0]},
+    {"time": 0.1, "lidar": "./velodyne/000001.bin", "camera": "./image_02/000001.png", "pose": [1,0,0,0.1,0,1,0,0,0,0,1,0]}
+  ]
+}
+```
+
+**Temporal reconstruction:** Enable **ACCUMULATE SCANS (WORLD SPACE)** for recordings with poses. Each pose must be a 12-element row-major **world-from-Velodyne** rigid transform, not a camera pose. The last 20 available scans are transformed into the current sensor frame; each scan is sampled to at most approximately 12k points. Scans not resident in the cache are omitted. This is a bounded, exploratory reconstruction, not a full SLAM or registration pipeline.
+
+Local KITTI folder imports also accept an optional `poses.txt` or `world_from_velodyne.txt` with one row-major 3×4 world-from-Velodyne matrix per LiDAR frame. KITTI odometry poses are typically world-from-camera and **must be converted** before use.
+
+**Demo limitation:** The built-in paired KITTI sample still contains only one frame. The manifest adapter is functional, but no verified public continuous paired recording has been bundled yet. The online default remains a LiDAR-only sequence.
+
 ## Streaming validation
 
 To validate the seek-priority change, open browser network throttling, start the online sample, and drag the timeline from the beginning to a distant frame. Repeat with a large local KITTI folder and verify that importing it does not eagerly load every scan. The requested frame should be fetched before prefetching its neighbors, and old-window requests should be canceled. Check the status line for cache and in-flight counts. This is a manual validation procedure; it has not been verified in an automated browser run.
