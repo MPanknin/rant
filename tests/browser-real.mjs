@@ -1,6 +1,7 @@
 import {chromium} from 'playwright';
 import assert from 'node:assert/strict';
 import {verifyTrackWorkflow} from './track-workflow.mjs';
+import {openView,closeView,verifyMinimalWorkspace} from './ui-workflow.mjs';
 // No intercepted requests: exercise the actual prepared recording and renderer.
 const browser=await chromium.launch({headless:true,args:['--enable-webgl','--use-gl=angle','--use-angle=swiftshader','--enable-unsafe-swiftshader']});
 const page=await browser.newPage({viewport:{width:1440,height:960}}),errors=[],sensorRequests=new Set();
@@ -24,14 +25,15 @@ try{
  assert.equal(await page.locator('#timeline').getAttribute('max'),'153');
  assert.ok(sensorRequests.size<154,'startup must not eagerly fetch the recording');
  const first=await imageFingerprint();
+ await openView(page);await page.locator('#project-cloud').check();await closeView(page);
  assert.ok(parseInt((await page.locator('#projection-status').textContent()).replaceAll(',',''))>1000,'real calibrated returns project into the image');
  await seek(35);assert.notEqual(await imageFingerprint(),first,'camera contains actual motion');
- await page.locator('#accumulate').check();
+ await openView(page);await page.locator('#accumulate').check();await closeView(page);
  await page.waitForFunction(()=>document.querySelector('#accumulation-status')?.textContent.startsWith('20 / 20 scans'),null,{timeout:30000});
  const reconstructed=await page.locator('#accumulation-status').textContent();
  assert.ok(Number(reconstructed.split(' · ')[1].replace(/[^0-9]/g,''))>100000,'history is visibly denser than one scan');
  await page.screenshot({path:process.env.RANT_SCREENSHOT??'/tmp/rant-real-desktop.png',fullPage:true});
- await page.locator('#accumulate').uncheck();
+ await openView(page);await page.locator('#accumulate').uncheck();await closeView(page);
  await page.locator('#next-frame').click();
  await page.waitForFunction(()=>document.querySelector('#frame')?.textContent==='FRAME 036');
  await page.locator('#prev-frame').click();
@@ -45,8 +47,16 @@ try{
  for(const i of [130,10,80,0])await seek(i);
  assert.match(await page.locator('#status').textContent(),/0 failed/);
  await verifyTrackWorkflow(page,seek,base);
+ await openView(page);await page.locator('#project-cloud').uncheck();await closeView(page);
+ await page.locator('#track-select').selectOption('1');
+ await verifyMinimalWorkspace(page,seek,base);
  await page.setViewportSize({width:390,height:844});await page.screenshot({path:'/tmp/rant-real-mobile.png',fullPage:true});
  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true,'mobile horizontal layout fits');
+ await page.locator('#track-select').selectOption('1');assert.equal(await page.locator('#track-panel').isVisible(),true);
+ await page.locator('#follow-track').check();await page.locator('#clear-track').click();
+ await page.locator('#annotate-mode').click();assert.equal(await page.locator('#annotation-panel').isVisible(),true);
+ await page.locator('#label').fill('Mobile marker');const mobileCanvas=await page.locator('#view canvas').boundingBox();await page.mouse.click(mobileCanvas.x+mobileCanvas.width*.5,mobileCanvas.y+mobileCanvas.height*.35);assert.match(await page.locator('#notes').textContent(),/Mobile marker/);await page.locator('#close-annotations').click();
+ await page.locator('#open-recordings').click();assert.equal(await page.locator('#recordings-dialog').isVisible(),true);await page.keyboard.press('Escape');
  assert.deepEqual(errors,[]);
  console.log('Real browser integration passed: 154 paired frames, calibrated projection, distinct images, 20-scan reconstruction, playback, seeks, mobile. '+reconstructed);
 }finally{await browser.close()}

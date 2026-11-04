@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import {openView,closeView} from './ui-workflow.mjs';
 import {PerspectiveCamera,Vector3} from 'three';
 
 /** Genuine KITTI annotations; no intercepted dataset or invented object motion. */
@@ -14,9 +15,9 @@ export async function verifyTrackWorkflow(page,seek,base){
  assert.equal(await page.locator('#track-select').inputValue(),'1');
  assert.match(await page.locator('#track-inspector').textContent(),/Cyclist #1.*dataset annotation/s);
  assert.equal(await page.locator('#track-projection g[data-track-id="1"]').getAttribute('data-selected'),'true');
- await page.locator('#project-cloud').uncheck();
+ await openView(page);await page.locator('#project-cloud').uncheck();
  assert.equal(await page.locator('#track-projection g[data-track-id="1"]').count(),1,'object overlay is independent of LiDAR overlay');
- await page.locator('#project-cloud').check();
+ await page.locator('#project-cloud').check();await closeView(page);
  // Select a different annotation in 3D using its geometric center projected through the known reset view.
  await page.locator('#reset-view').click();
  const canvas=await page.locator('#view canvas').boundingBox();
@@ -50,8 +51,8 @@ export async function verifyTrackWorkflow(page,seek,base){
  assert.match(await page.locator('#track-focus-state').textContent(),/^Follow paused/);
  assert.equal(await page.locator('#track-projection g[data-track-id="4"]').count(),0,'expired annotation must disappear');
  await seek(120);assert.match(await page.locator('#track-focus-state').textContent(),/^Following/);
- await page.locator('#show-tracks').uncheck();assert.equal(await page.locator('#track-projection').count(),0);
- await page.locator('#show-tracks').check();
+ await openView(page);await page.locator('#show-tracks').uncheck();assert.equal(await page.locator('#track-projection').count(),0);
+ await page.locator('#show-tracks').check();await closeView(page);
  await page.locator('#clear-track').click();assert.equal(await page.locator('#track-select').inputValue(),'');assert.equal(await page.locator('#follow-track').isChecked(),false);
  await page.locator('#reset-view').click();
  console.log('Real object workflows passed: 15 tracks, camera/3D picking, linked selection, follow playback, presence ranges, first/last and missing observations');

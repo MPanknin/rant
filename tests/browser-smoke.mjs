@@ -1,5 +1,6 @@
 import { chromium } from 'playwright';
 import assert from 'node:assert/strict';
+import {openView,closeView} from './ui-workflow.mjs';
 import {mkdtemp,mkdir,writeFile,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
@@ -37,12 +38,13 @@ try{
     await page.waitForFunction(i=>document.querySelector('#frame')?.textContent==='FRAME '+String(i).padStart(3,'0')&&document.querySelector('#count')?.textContent==='2',index,{timeout:10000});
   }
   // Exercise the inspector's three point-color modes without runtime exceptions.
+  await openView(page);
   for(const mode of ['intensity','range','height']){
     await page.locator('#color-mode').selectOption(mode);
     assert.equal(await page.locator('#color-mode').inputValue(),mode);
     assert.equal(await page.locator('#count').textContent(),'2');
   }
-  await page.locator('#measure-mode').click();
+  await closeView(page);await page.locator('#measure-mode').click();
   assert.match(await page.locator('#measure-overlay').textContent(),/Click two LiDAR points/);
   await page.locator('#clear-measure').click();
   // Exercise sustained playback after seeking, including wraparound.
@@ -50,7 +52,7 @@ try{
   const startFrame=await page.locator('#frame').textContent();
   await page.waitForFunction(start=>document.querySelector('#frame')?.textContent!==start,startFrame,{timeout:10000});
   await page.locator('#play').click();
-  await page.locator('summary').filter({hasText:'RECORDINGS & IMPORT'}).click();
+  await page.locator('#open-recordings').click();
   await page.locator('#stream').click();
   await page.waitForFunction(()=>document.querySelector('#count')?.textContent==='2',null,{timeout:10000});
   await page.locator('#play').click(); // stop newly started playback
@@ -59,26 +61,26 @@ try{
   assert.equal(await page.locator('#playback-speed').inputValue(),'0.5');
   assert.equal(await page.locator('#prev-frame').count(),1);
   assert.equal(await page.locator('#next-frame').count(),1);
-  await page.locator('#fusion').click();
+  await page.locator('#open-recordings').click();await page.locator('#fusion').click();
   await page.waitForFunction(()=>document.querySelector('#count')?.textContent==='2',null,{timeout:10000});
   await page.waitForFunction(()=>document.querySelector('#camera img')?.complete===true,null,{timeout:10000});
   assert.equal(await page.locator('#sensor-indicator').textContent(),'LIDAR + CAMERA');
   assert.equal(await page.locator('#mode').textContent(),'KITTI CAMERA + LIDAR');
   assert.equal(await page.locator('#track-select').isDisabled(),true);
   assert.equal(await page.locator('#track-projection g').count(),0);
-  assert.equal(await page.locator('#project-cloud').isChecked(),true);
-  await page.locator('#project-cloud').uncheck();
-  await page.locator('#project-cloud').check();
+  assert.equal(await page.locator('#project-cloud').isChecked(),false);
+  await openView(page);await page.locator('#project-cloud').uncheck();
+  await page.locator('#project-cloud').check();await closeView(page);
   assert.equal(await page.locator('#camera-projection').count(),1);
   assert.equal(await page.locator('#focus-selection').isDisabled(),true);
-  await page.locator('#camera').click({position:{x:177,y:120}});
-  assert.ok((await page.locator('#measure-overlay').textContent()).includes('projected LiDAR')|| (await page.locator('#measure-overlay').textContent()).includes('No projected LiDAR'));
-  await page.locator('#manifest-url').fill('https://mock.rant.test/recording.json');
+  await page.locator('#camera').click();
+  assert.ok((await page.locator('#inspection').textContent()).includes('Point #')|| (await page.locator('#measure-overlay').textContent()).includes('No projected LiDAR'));
+  await page.locator('#open-recordings').click();await page.locator('#manifest-url').fill('https://mock.rant.test/recording.json');
   await page.locator('#load-manifest').click();
   await page.waitForFunction(()=>document.querySelector('#mode')?.textContent==='TEST MULTIMODAL'&&document.querySelector('#count')?.textContent==='2',null,{timeout:10000});
   await page.locator('#track-select').selectOption('fixture-track');
   await page.locator('#follow-track').check();
-  await page.locator('#accumulate').check();
+  await openView(page);await page.locator('#accumulate').check();await closeView(page);
   assert.match(await page.locator('#accumulation-status').textContent(),/scans accumulated/);
   await page.locator('#next-frame').click();
   await page.waitForFunction(()=>document.querySelector('#frame')?.textContent==='FRAME 001'&&document.querySelector('#count')?.textContent==='2',null,{timeout:10000});
@@ -90,18 +92,18 @@ try{
     for(const i of [0,2])await writeFile(join(local,'image_02/data/'+String(i).padStart(10,'0')+'.png'),png);
     await writeFile(join(local,'velodyne_points/timestamps.txt'),'2011-09-26 12:00:00.000000000\n2011-09-26 12:00:00.100000000\n2011-09-26 12:00:00.200000000\n');
     await writeFile(join(local,'image_02/timestamps.txt'),'2011-09-26 12:00:00.010000000\n2011-09-26 12:00:00.210000000\n');
-    await page.locator('#folder').setInputFiles(local);
+    await page.locator('#open-recordings').click();await page.locator('#folder').setInputFiles(local);
     await page.waitForFunction(()=>document.querySelector('#mode')?.textContent==='KITTI RAW'&&document.querySelector('#count')?.textContent==='2');
     assert.equal(await page.locator('#timeline').getAttribute('max'),'2');
     assert.equal(await page.locator('#track-select').isDisabled(),true,'dataset switch clears object tracks');
     assert.equal(await page.locator('#follow-track').isChecked(),false,'dataset switch clears following');
     assert.equal(await page.locator('#track-range').isVisible(),false);
-    await page.locator('#calibration-files').setInputFiles([
+    await page.locator('#open-recordings').click();await page.locator('#calibration-files').setInputFiles([
       {name:'calib_cam_to_cam.txt',mimeType:'text/plain',buffer:Buffer.from('P_rect_02: 100 0 50 0 0 100 40 0 0 0 1 0\nR_rect_00: 1 0 0 0 1 0 0 0 1')},
       {name:'calib_velo_to_cam.txt',mimeType:'text/plain',buffer:Buffer.from('R: 0 -1 0 0 0 -1 1 0 0\nT: 0 0 0')}
     ]);
     await page.waitForFunction(()=>document.querySelector('#import-status')?.textContent==='Calibration applied to 3 frames');
-    await page.locator('#next-frame').click();
+    await page.keyboard.press('Escape');await page.locator('#next-frame').click();
     await page.waitForFunction(()=>document.querySelector('#frame')?.textContent==='FRAME 001'&&document.querySelector('#camera-sync')?.textContent==='NO CAMERA');
     assert.equal(await page.locator('#camera img').count(),0,'missing image must not show the previous frame');
     await page.locator('#next-frame').click();

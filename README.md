@@ -14,11 +14,24 @@ The app opens **KITTI Raw 2011_09_26_drive_0005_sync**, a real residential drive
 - Genuine OXTS GPS/IMU poses, converted from world-from-IMU into world-from-Velodyne using `calib_imu_to_velo.txt`; approximately 62 m of displacement.
 - About 87 MiB of prepared sensor files. Every fourth LiDAR return is retained, and PNG camera images are converted to JPEG quality 85 without resizing. XYZ units, intensity, calibration and frame ordering are preserved.
 
-Playback waits for the next scan **and decoded camera frame**. Scrubbing never reuses an image from another timestamp. Missing images are explicitly marked. The camera overlay projects current LiDAR returns using `P_rect_02 × R_rect_00 × T_camera_from_velodyne`; click either view to inspect a corresponding point.
+Playback waits for the next scan **and decoded camera frame**. Scrubbing never reuses an image from another timestamp. Missing images are explicitly marked. Enable **View → LiDAR on camera** to project current LiDAR returns using `P_rect_02 × R_rect_00 × T_camera_from_velodyne`. Alt-click either view to inspect a corresponding point.
 
-Enable **ACCUMULATE 20 SCANS** to compare one observation with a denser environment. The current sensor stays at the origin; history and the measured trajectory transform into its coordinate system. Space plays/pauses, left/right arrows step frames, and F focuses a selection. Mouse drag orbits, right drag pans, scroll zooms; double-click adds a frame-local annotation.
+Enable **View → Accumulate 20 scans** to compare one observation with a denser environment. The current sensor stays at the origin; history and the measured trajectory transform into its coordinate system. Space plays/pauses, left/right arrows step frames, and F focuses a selection. Mouse drag orbits, right drag pans, scroll zooms; double-click adds a frame-local annotation.
 
-Other recordings, the original 154-frame Udacity LiDAR stream, the original single-frame fusion sample, remote manifests and local KITTI import remain available under **Recordings & import**.
+Other recordings, the original 154-frame Udacity LiDAR stream, the original single-frame fusion sample, remote manifests and local KITTI import remain available by clicking the recording name in the header.
+
+## Minimal workspace
+
+The scene fills the workspace. A compact camera pane and timeline stay visible; the toolbar offers **Inspect**, **Measure**, and **Annotate**. No permanent sensor statistics, empty inspectors, legends, or instruction panels occupy the canvas.
+
+- Select a box to reveal its **Focus**, **Follow**, and **First / Last** controls. Expand **Details** for dimensions and motion metadata. Only the selected box gets a camera label.
+- Alt-click a return to reveal its point inspector. Point and object selection are mutually exclusive; frame changes clear stale point details.
+- **Measure** pauses playback and shows its instructions/result only while active. Both camera and 3D returns can supply endpoints.
+- **Annotate** pauses playback and opens a label field and saved markers. Click the 3D scene to place a marker (nearest return, otherwise the ground plane), or a projected camera return. Export JSON from this panel. The original double-click shortcut remains available.
+- **View** contains point coloring, accumulation, object boxes and camera projection. LiDAR projection is off initially so the image stays readable; calibrated point picking still works.
+- Click the recording name for examples, remote manifests, folder import and additional calibration. **Info** holds recording metadata, streaming diagnostics, shortcuts and attribution. Dialogs support Escape, focus restoration and keyboard navigation.
+
+The camera docks at the bottom on narrow screens. Annotation tools temporarily replace it to leave room for placing markers. The stylesheet is consolidated, and disclosure/dialog behavior lives in `src/ui/workspace.ts`.
 
 ## Tracked-object inspection
 
@@ -29,7 +42,7 @@ The default drive includes **15 genuine KITTI Raw tracklets**: 9 cars, 3 vans, 2
 - **FIRST / LAST** jump to the selected object's first/last annotated frame. The yellow timeline ribbon marks its actual presence, including any gaps.
 - **FOCUS** centers the 3D camera once. **FOLLOW** keeps the object centered while allowing orbit and zoom, pauses outside its annotated interval, and resumes when the object returns. Reset view disables following.
 - The selected trajectory is built from object observations transformed through measured ego poses and then into the current sensor frame. It includes past and future annotated observations. Gaps and missing ego poses are not connected. No object pose is invented outside its labeled frames.
-- Camera cuboids use the same calibrated coordinate chain as LiDAR projection, with near-plane clipping. Disabling LiDAR overlay leaves object boxes visible. **BOXES** hides both the cuboids and selected trajectory.
+- Camera cuboids use the same calibrated coordinate chain as LiDAR projection, with near-plane clipping. Disabling LiDAR overlay leaves object boxes visible. **View → Object boxes** hides both the cuboids and selected trajectory.
 
 The preparation script also downloads the official `2011_09_26_drive_0005_tracklets.zip` (SHA-256 pinned) and converts `tracklet_labels.xml` without changing its frame indices, dimensions, bottom-center translations, rotations or annotation-state fields. The SDK convention is confirmed by KITTI's `matlab/run_demoTracklets.m`: local X length, Y width, Z from 0 to height, then rotation and translation in Velodyne coordinates. The same KITTI attribution and CC BY-NC-SA 3.0 terms apply.
 
@@ -65,7 +78,7 @@ Coordinate systems remain distinct:
 
 ## Remote recording manifest
 
-Load an HTTP(S) manifest under **Recordings & import**. Relative paths resolve against its URL; remote sources must allow browser CORS requests. No data is written to a server.
+Load an HTTP(S) manifest by clicking the recording name in the header. Relative paths resolve against its URL; remote sources must allow browser CORS requests. No data is written to a server.
 
 ```json
 {
@@ -85,7 +98,7 @@ Manifests may additionally provide a top-level `tracks` array. Each track has a 
 
 Select a KITTI Raw folder containing `velodyne_points/data/*.bin`, optionally `image_02/data/*` and sensor timestamp files. Files are indexed lazily; camera matches use the nearest timestamp within 50 ms, or filenames when timestamps are unavailable. Without complete LiDAR timestamps, the importer assumes 10 Hz.
 
-Calibration can reside in the selected parent folder or be added afterward with **Add calibration files**. Select both `calib_cam_to_cam.txt` and `calib_velo_to_cam.txt` for KITTI Raw, or one KITTI Object calibration file with `P2`, `R0_rect`, `Tr_velo_to_cam`. Apply calibration only to the recording it belongs to.
+Calibration can reside in the selected parent folder or be added afterward with **Add calibration**. Select both `calib_cam_to_cam.txt` and `calib_velo_to_cam.txt` for KITTI Raw, or one KITTI Object calibration file with `P2`, `R0_rect`, `Tr_velo_to_cam`. Apply calibration only to the recording it belongs to.
 
 Optional `world_from_velodyne.txt` (or legacy `poses.txt`) must already contain one rigid world-from-Velodyne matrix per scan. Ordinary KITTI Odometry `poses.txt` contains camera poses and must be converted first. OXTS conversion is implemented by the built-in preparation script, not yet by the local folder importer.
 
@@ -100,7 +113,7 @@ npx playwright install chromium
 node tests/run-browser.mjs      # starts and stops its own test server
 ```
 
-Browser tests include the original mocked workflow regression suite and a separate **unmocked real-data** integration test: initial lazy loading, projection, distinct consecutive images, synchronized playback, stepping, far seeks, 20-scan reconstruction, missing frames, local import and responsive layout. The real-data object workflow additionally clicks camera and 3D cuboids, verifies linked selection, follows playback, jumps between annotation endpoints, and checks disappearance/re-entry and overlay toggles. `RANT_TEST_URL` on the individual browser scripts can target a deployed build. CI uploads desktop/mobile screenshots. After Pages deployment, it reruns the real-data browser test against the public URL and checks `revision.txt` against the deployed commit. Unit fixtures test exact translation/rotation composition, projection and calibration layouts, invalid manifests, memory limits and stale request disposal.
+Browser tests include the original mocked workflow regression suite and a separate **unmocked real-data** integration test: initial lazy loading, projection, distinct consecutive images, synchronized playback, stepping, far seeks, 20-scan reconstruction, missing frames, local import and responsive layout. The minimal-workspace workflow checks contextual visibility, modal keyboard behavior, actual projected-point inspection, marker placement/export and mobile controls. The real-data object workflow additionally clicks camera and 3D cuboids, verifies linked selection, follows playback, jumps between annotation endpoints, and checks disappearance/re-entry and overlay toggles. `RANT_TEST_URL` on the individual browser scripts can target a deployed build. CI uploads desktop/mobile screenshots. After Pages deployment, it reruns the real-data browser test against the public URL and checks `revision.txt` against the deployed commit. Unit fixtures test exact translation/rotation composition, projection and calibration layouts, invalid manifests, memory limits and stale request disposal.
 
 The real-data alignment test compares stationary scenery from frames 20 and 30; with this sampled data its median nearest-return error drops from roughly 1.76 m to 0.22 m after applying the measured poses. This is a sanity check, not a general reconstruction accuracy guarantee.
 
