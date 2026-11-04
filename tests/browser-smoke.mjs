@@ -24,6 +24,11 @@ try{
     await page.locator('#timeline').evaluate((slider,i)=>{slider.value=String(i);slider.dispatchEvent(new Event('input',{bubbles:true}))},index);
     await page.waitForFunction(i=>document.querySelector('#frame')?.textContent==='FRAME '+String(i).padStart(3,'0')&&document.querySelector('#count')?.textContent==='2',index,{timeout:10000});
   }
+  // Exercise sustained playback after seeking, including wraparound.
+  await page.locator('#play').click();
+  const startFrame=await page.locator('#frame').textContent();
+  await page.waitForFunction(start=>document.querySelector('#frame')?.textContent!==start,startFrame,{timeout:10000});
+  await page.locator('#play').click();
   await page.locator('#stream').click();
   await page.waitForFunction(()=>document.querySelector('#count')?.textContent==='2',null,{timeout:10000});
   await page.locator('#play').click(); // stop newly started playback
