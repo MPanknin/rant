@@ -24,6 +24,15 @@ try{
     await page.locator('#timeline').evaluate((slider,i)=>{slider.value=String(i);slider.dispatchEvent(new Event('input',{bubbles:true}))},index);
     await page.waitForFunction(i=>document.querySelector('#frame')?.textContent==='FRAME '+String(i).padStart(3,'0')&&document.querySelector('#count')?.textContent==='2',index,{timeout:10000});
   }
+  // Exercise the inspector's three point-color modes without runtime exceptions.
+  for(const mode of ['intensity','range','height']){
+    await page.locator('#color-mode').selectOption(mode);
+    assert.equal(await page.locator('#color-mode').inputValue(),mode);
+    assert.equal(await page.locator('#count').textContent(),'2');
+  }
+  await page.locator('#measure-mode').click();
+  assert.match(await page.locator('#measure-overlay').textContent(),/Click two LiDAR points/);
+  await page.locator('#clear-measure').click();
   // Exercise sustained playback after seeking, including wraparound.
   await page.locator('#play').click();
   const startFrame=await page.locator('#frame').textContent();
