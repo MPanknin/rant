@@ -12,7 +12,11 @@ async function seek(index){
 }
 async function imageFingerprint(){return page.locator('#camera img').evaluate(img=>{const c=document.createElement('canvas');c.width=32;c.height=12;c.getContext('2d').drawImage(img,0,0,32,12);return Array.from(c.getContext('2d').getImageData(0,0,32,12).data).join(',')})}
 try{
- await page.goto(base,{waitUntil:'domcontentloaded'});
+ if(process.env.RANT_EXPECTED_COMMIT){
+  const revision=await page.request.get(new URL('revision.txt?v='+process.env.RANT_EXPECTED_COMMIT,base).href);
+  assert.equal((await revision.text()).trim(),process.env.RANT_EXPECTED_COMMIT,'deployed revision matches the commit');
+ }
+ await page.goto(base+(process.env.RANT_EXPECTED_COMMIT?'?v='+process.env.RANT_EXPECTED_COMMIT:''),{waitUntil:'domcontentloaded'});
  await page.waitForFunction(()=>document.querySelector('#mode')?.textContent==='KARLSRUHE · DRIVE 0005',{timeout:60000});
  if(await page.locator('#play').textContent()==='Ⅱ')await page.locator('#play').click();
  await seek(0);

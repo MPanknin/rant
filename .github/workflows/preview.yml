@@ -39,10 +39,27 @@ jobs:
         run: |
           pip install numpy==2.2.6 Pillow==11.3.0
           python scripts/prepare-demo.py
-      - run: npm run build -- --base=/rant/
+      - run: |
+          npm run build -- --base=/rant/
+          printf '%s' "$GITHUB_SHA" > dist/revision.txt
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist
       - id: deployment
         uses: actions/deploy-pages@v4
+      - name: Verify published multimodal recording
+        env:
+          RANT_TEST_URL: ${{ steps.deployment.outputs.page_url }}
+          RANT_EXPECTED_COMMIT: ${{ github.sha }}
+        run: |
+          npm install --no-save --package-lock=false playwright@1.56.1
+          npx playwright install --with-deps chromium
+          node tests/browser-real.mjs
+      - name: Save published browser verification
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rant-published-verification
+          path: /tmp/rant-real-*.png
+          if-no-files-found: ignore
