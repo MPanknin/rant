@@ -1,0 +1,226 @@
+{
+  "reference": {
+    "image": "reference.jpg",
+    "points": "reference.bin",
+    "scan": 104,
+    "camera": 104,
+    "lidarTime": null,
+    "cameraTime": 1581624663.149
+  },
+  "drive": [
+    {
+      "image": "field-00.jpg",
+      "points": "field-00.bin",
+      "scan": 195,
+      "camera": 290,
+      "lidarTime": 1581791698.015024,
+      "cameraTime": 1581791698.0085266
+    },
+    {
+      "image": "field-01.jpg",
+      "points": "field-01.bin",
+      "scan": 197,
+      "camera": 292,
+      "lidarTime": 1581791698.215389,
+      "cameraTime": 1581791698.208581
+    },
+    {
+      "image": "field-02.jpg",
+      "points": "field-02.bin",
+      "scan": 199,
+      "camera": 294,
+      "lidarTime": 1581791698.415783,
+      "cameraTime": 1581791698.4086514
+    },
+    {
+      "image": "field-03.jpg",
+      "points": "field-03.bin",
+      "scan": 201,
+      "camera": 296,
+      "lidarTime": 1581791698.61617,
+      "cameraTime": 1581791698.6084974
+    },
+    {
+      "image": "field-04.jpg",
+      "points": "field-04.bin",
+      "scan": 203,
+      "camera": 298,
+      "lidarTime": 1581791698.816561,
+      "cameraTime": 1581791698.8085294
+    },
+    {
+      "image": "field-05.jpg",
+      "points": "field-05.bin",
+      "scan": 205,
+      "camera": 300,
+      "lidarTime": 1581791699.017017,
+      "cameraTime": 1581791699.0085745
+    },
+    {
+      "image": "field-06.jpg",
+      "points": "field-06.bin",
+      "scan": 207,
+      "camera": 302,
+      "lidarTime": 1581791699.21735,
+      "cameraTime": 1581791699.2086585
+    },
+    {
+      "image": "field-07.jpg",
+      "points": "field-07.bin",
+      "scan": 209,
+      "camera": 304,
+      "lidarTime": 1581791699.417742,
+      "cameraTime": 1581791699.4085836
+    },
+    {
+      "image": "field-08.jpg",
+      "points": "field-08.bin",
+      "scan": 211,
+      "camera": 306,
+      "lidarTime": 1581791699.618153,
+      "cameraTime": 1581791699.6088178
+    },
+    {
+      "image": "field-09.jpg",
+      "points": "field-09.bin",
+      "scan": 213,
+      "camera": 308,
+      "lidarTime": 1581791699.818555,
+      "cameraTime": 1581791699.80857
+    },
+    {
+      "image": "field-10.jpg",
+      "points": "field-10.bin",
+      "scan": 215,
+      "camera": 310,
+      "lidarTime": 1581791700.01894,
+      "cameraTime": 1581791700.0085611
+    },
+    {
+      "image": "field-11.jpg",
+      "points": "field-11.bin",
+      "scan": 217,
+      "camera": 312,
+      "lidarTime": 1581791700.219314,
+      "cameraTime": 1581791700.2086258
+    },
+    {
+      "image": "field-12.jpg",
+      "points": "field-12.bin",
+      "scan": 219,
+      "camera": 314,
+      "lidarTime": 1581791700.419709,
+      "cameraTime": 1581791700.4091287
+    },
+    {
+      "image": "field-13.jpg",
+      "points": "field-13.bin",
+      "scan": 221,
+      "camera": 316,
+      "lidarTime": 1581791700.620087,
+      "cameraTime": 1581791700.6084619
+    },
+    {
+      "image": "field-14.jpg",
+      "points": "field-14.bin",
+      "scan": 223,
+      "camera": 318,
+      "lidarTime": 1581791700.820512,
+      "cameraTime": 1581791700.8085787
+    },
+    {
+      "image": "field-15.jpg",
+      "points": "field-15.bin",
+      "scan": 225,
+      "camera": 320,
+      "lidarTime": 1581791701.020874,
+      "cameraTime": 1581791701.008473
+    },
+    {
+      "image": "field-16.jpg",
+      "points": "field-16.bin",
+      "scan": 227,
+      "camera": 322,
+      "lidarTime": 1581791701.221307,
+      "cameraTime": 1581791701.208699
+    },
+    {
+      "image": "field-17.jpg",
+      "points": "field-17.bin",
+      "scan": 229,
+      "camera": 324,
+      "lidarTime": 1581791701.421673,
+      "cameraTime": 1581791701.408661
+    },
+    {
+      "image": "field-18.jpg",
+      "points": "field-18.bin",
+      "scan": 231,
+      "camera": 326,
+      "lidarTime": 1581791701.62207,
+      "cameraTime": 1581791701.608607
+    },
+    {
+      "image": "field-19.jpg",
+      "points": "field-19.bin",
+      "scan": 233,
+      "camera": 328,
+      "lidarTime": 1581791701.82244,
+      "cameraTime": 1581791701.8085582
+    }
+  ],
+  "rig": {
+    "intrinsics": [
+      2813.643275,
+      2808.326079,
+      969.285772,
+      624.049972
+    ],
+    "distortion": [
+      -0.134313,
+      -0.025905,
+      0.002181,
+      0.00084,
+      0.0
+    ],
+    "width": 1920,
+    "height": 1200,
+    "cameraFromOuster": [
+      0.03462246684739484,
+      0.9993605498240524,
+      -0.008931754853809953,
+      -0.03566209317268607,
+      0.0047917714618476714,
+      -0.009103006103714584,
+      -0.9999470857031051,
+      -0.17154602883793704,
+      -0.9993889751821652,
+      0.03457783589589211,
+      -0.005103875889780895,
+      -0.1337930899023441,
+      0.0,
+      0.0,
+      0.0,
+      1.0
+    ],
+    "ousterFromVelodyne": [
+      -0.999999834338649,
+      0.0003790071927418685,
+      0.00043321613807800963,
+      -0.2520577585315044,
+      -0.00037916414410189153,
+      -0.9999998624979489,
+      -0.00036226873297331416,
+      0.0009674683128480785,
+      0.00043307877605439977,
+      -0.00036243293298559193,
+      0.9999998405425586,
+      0.09208209679112901,
+      0.0,
+      0.0,
+      0.0,
+      1.0
+    ]
+  },
+  "odometryDisplacementMeters": 3.8745180395284513
+}
