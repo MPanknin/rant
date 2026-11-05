@@ -46,6 +46,7 @@ jobs:
           for i in $(seq 1 30); do if curl -fsS http://127.0.0.1:4173/ > /dev/null; then break; fi; sleep 1; done
           node tests/browser-smoke.mjs
           node tests/browser-real.mjs
+          node tests/browser-rellis.mjs
       - name: Save browser verification screenshots
         if: always()
         uses: actions/upload-artifact@v4

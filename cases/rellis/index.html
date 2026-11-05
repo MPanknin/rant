@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#0c1420"><meta name="description" content="Reproduce a documented RELLIS-3D camera–LiDAR frame mix-up. Switch the transform on the same Velodyne scan."><title>Two LiDARs, one camera · Rant</title></head>
+<body>
+<header><a class="wordmark" href="../../">Rant</a><span> / </span><span>Field recordings</span></header>
+<main>
+  <h1>Two LiDARs, one camera</h1>
+  <p class="intro">A Velodyne scan was projected using the Ouster calibration. Switch the transform and inspect the same returns.</p>
+  <div class="workspace">
+    <section class="sensor" aria-label="Camera with projected LiDAR">
+      <div class="strip"><span>Basler camera</span><span id="frame-label">Loading…</span></div>
+      <div class="image"><canvas id="scene" aria-label="Basler image with Velodyne returns"></canvas></div>
+      <div class="strip"><label><input id="overlay" type="checkbox" checked> LiDAR overlay</label><span id="visible-count"></span></div>
+    </section>
+    <section class="controls" aria-label="Case controls">
+      <h2>Transform</h2>
+      <div role="group" aria-label="Projection mode">
+        <button id="reported" aria-pressed="true">As reported</button>
+        <button id="corrected" aria-pressed="false">Apply missing transform</button>
+      </div>
+      <div id="path" class="path"></div>
+      <p id="explanation"></p>
+      <hr>
+      <label for="source">Recording</label>
+      <select id="source"><option value="reference">Reference · frame 000104</option><option value="drive">Field recording · excerpt</option></select>
+      <div id="transport" hidden><button id="play" aria-label="Play excerpt">Play</button><input id="seek" type="range" aria-label="Excerpt frame" min="0" value="0" max="0"></div>
+      <p id="timing"></p>
+      <p id="status" role="status"></p>
+    </section>
+  </div>
+  <details><summary>What happened?</summary><p>A RELLIS-3D user loaded Velodyne points into an example configured for the Ouster. The maintainer confirmed which sensor the calibration belongs to and supplied the transform between the two LiDARs. Both modes here keep the same image, scan, intrinsics and lens distortion. Only the Velodyne-to-Ouster transform changes.</p><p>The reference is the authors’ published frame. The excerpt comes from their separate merged ROS bag and pairs scans to camera images by timestamp. The two recordings have different timestamps. Remaining alignment differences can include motion during capture.</p><a href="https://github.com/unmannedlab/RELLIS-3D/issues/27#issuecomment-1089522167">Original diagnosis ↗</a> · <a href="https://github.com/unmannedlab/RELLIS-3D/blob/main/utils/lidar2img.ipynb">Projection notebook ↗</a></details>
+  <footer>Data: <a href="https://github.com/unmannedlab/RELLIS-3D">RELLIS-3D · Jiang et al.</a> · <a href="https://creativecommons.org/licenses/by-nc-sa/3.0/">CC BY-NC-SA 3.0</a> · Images resized, scans sampled.</footer>
+</main>
+<script type="module" src="/src/cases/rellis/view.ts"></script>
+</body>
+</html>

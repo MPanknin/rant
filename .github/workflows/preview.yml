@@ -42,6 +42,12 @@ jobs:
       - run: |
           npm run build -- --base=/rant/
           printf '%s' "$GITHUB_SHA" > dist/revision.txt
+      - name: Record the calibration case
+        run: |
+          npm install --no-save --package-lock=false playwright@1.56.1
+          npx playwright install --with-deps chromium
+          command -v ffmpeg || (sudo apt-get update && sudo apt-get install -y ffmpeg)
+          node scripts/record-rellis.mjs dist/rellis-case.mp4
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
@@ -53,9 +59,8 @@ jobs:
           RANT_TEST_URL: ${{ steps.deployment.outputs.page_url }}
           RANT_EXPECTED_COMMIT: ${{ github.sha }}
         run: |
-          npm install --no-save --package-lock=false playwright@1.56.1
-          npx playwright install --with-deps chromium
           node tests/browser-real.mjs
+          node tests/browser-rellis.mjs
       - name: Save published browser verification
         if: always()
         uses: actions/upload-artifact@v4

@@ -6,6 +6,8 @@ A browser-based viewer for robotics recordings, built with TypeScript, Three.js 
 
 The demo is a 154-frame KITTI drive through Karlsruhe with camera calibration, GPS/IMU poses and 15 annotated objects. Frames load on demand into bounded caches. Local files stay in your browser.
 
+[Field case: reproduce a camera–LiDAR calibration mix-up on RELLIS-3D](docs/rellis.md)
+
 ## Using it
 
 - Click an object box to inspect or follow it. Alt-click a LiDAR return for point details.
